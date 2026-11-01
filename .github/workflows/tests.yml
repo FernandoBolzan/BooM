@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            desktop-file-utils \
+            gir1.2-ayatanaappindicator3-0.1 \
+            gir1.2-gtk-3.0 \
+            python3-gi
+      - name: Compile Python files
+        run: /usr/bin/python3 -m py_compile boom.py tests/test_boom.py
+      - name: Run tests
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Check CLI and snapshot
+        run: |
+          /usr/bin/python3 boom.py --version
+          /usr/bin/python3 boom.py --snapshot > /tmp/boom-snapshot.json
+          /usr/bin/python3 -c 'import json; json.load(open("/tmp/boom-snapshot.json", encoding="utf-8"))'
+      - name: Validate autostart desktop entry
+        run: |
+          config_home="$(mktemp -d)"
+          trap 'rm -rf "$config_home"' EXIT
+          XDG_CONFIG_HOME="$config_home" /usr/bin/python3 boom.py --enable-autostart
+          desktop-file-validate "$config_home/autostart/boom-monitor.desktop"
+          XDG_CONFIG_HOME="$config_home" /usr/bin/python3 boom.py --disable-autostart

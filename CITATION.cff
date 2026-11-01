@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use BooM in research or documentation, please cite this project."
+title: "BooM"
+abstract: "A local Linux system monitor with GTK and terminal interfaces."
+authors:
+  - family-names: Bolzan
+    given-names: Fernando
+version: 0.1.0
+date-released: 2026-11-01
+license: MIT
+repository-code: "https://github.com/FernandoBolzan/BooM"
