@@ -2,7 +2,9 @@ import contextlib
 import inspect
 import io
 import json
+import os
 import signal
+import stat
 import sys
 import tempfile
 import types
@@ -12,11 +14,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import boom
+import boom_performance
 
 
 class FormatTests(unittest.TestCase):
     def test_release_version_is_declared(self):
-        self.assertEqual(boom.__version__, "0.1.0")
+        self.assertEqual(boom.__version__, "0.2.0")
 
     def test_version_command_prints_release_version(self):
         output = io.StringIO()
@@ -24,7 +27,7 @@ class FormatTests(unittest.TestCase):
             with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
                 boom.main()
         self.assertEqual(result.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "BooM 0.1.0")
+        self.assertEqual(output.getvalue().strip(), "BooM 0.2.0")
 
     def test_byte_units_include_mb_and_gb(self):
         self.assertEqual(boom.format_bytes(10 * 1024**2), "10.0 MB")
@@ -39,15 +42,586 @@ class FormatTests(unittest.TestCase):
     def test_navigation_has_dedicated_memory_and_graphics_areas(self):
         self.assertEqual(boom.NAVIGATION_PAGES, (
             "Visão geral", "Sistema", "Memória", "Gráficos", "Discos",
-            "Rede", "Processos", "Programas", "Inicialização",
+            "Rede", "Processos", "Programas", "Inicialização", "Testes",
         ))
         self.assertEqual(boom.PAGE_MEMORY, 2)
         self.assertEqual(boom.PAGE_GRAPHICS, 3)
         self.assertEqual(boom.PAGE_DISKS, 4)
+        self.assertEqual(boom.PAGE_TESTS, 9)
         self.assertEqual(len(boom.NAVIGATION_PAGES), len(boom.NAVIGATION_DESCRIPTIONS))
 
     def test_uptime(self):
         self.assertEqual(boom.format_uptime(90061), "1d 01h 01min")
+
+
+class PerformanceHistoryTests(unittest.TestCase):
+    def test_performance_sample_keeps_aggregate_metrics_without_hardware_names(self):
+        sample = boom_performance.extract_performance_sample({
+            "cpu_percent": 42,
+            "memory": {"used": 75, "total": 100, "swap_used": 10, "swap_total": 50},
+            "gpu_metrics": [{
+                "name": "PRIVATE GPU NAME", "gpu_utilization_percent": 60,
+                "vram_used_mib": 9, "vram_total_mib": 10, "temperature_celsius": 70,
+            }],
+            "temperatures": [
+                {"name": "k10temp · Tctl", "celsius": 65},
+                {"name": "nvme · Composite", "celsius": 80},
+            ],
+            "disk_io": {"busy_percent": 45, "read_bytes_per_second": 512},
+        }, sampled_at=1234)
+        self.assertEqual(sample["sampled_at"], 1234)
+        self.assertEqual(sample["cpu_percent"], 42)
+        self.assertEqual(sample["ram_percent"], 75)
+        self.assertEqual(sample["swap_percent"], 20)
+        self.assertEqual(sample["gpu_percent"], 60)
+        self.assertEqual(sample["vram_percent"], 90)
+        self.assertEqual(sample["cpu_temp_celsius"], 65)
+        self.assertEqual(sample["gpu_temp_celsius"], 70)
+        self.assertNotIn("PRIVATE GPU NAME", str(sample))
+        self.assertNotIn("name", sample)
+
+    def test_diskstats_parser_uses_only_whole_devices_and_correct_fields(self):
+        payload = (
+            "259 0 nvme0n1 100 0 200 0 150 0 300 0 0 50 70 0 0 0 0 0 0\n"
+            "259 1 nvme0n1p1 10 0 20 0 15 0 30 0 0 5 7 0 0 0 0 0 0\n"
+            "8 0 sda not-a-number 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+        )
+        parsed = boom_performance.parse_proc_diskstats(payload, whole_devices={"nvme0n1", "sda"})
+        self.assertEqual(list(parsed), ["nvme0n1"])
+        self.assertEqual(parsed["nvme0n1"]["sectors_read"], 200)
+        self.assertEqual(parsed["nvme0n1"]["sectors_written"], 300)
+        self.assertEqual(parsed["nvme0n1"]["io_milliseconds"], 50)
+        self.assertEqual(parsed["nvme0n1"]["weighted_io_milliseconds"], 70)
+
+
+class FirmwareTests(unittest.TestCase):
+    def test_fwupd_inventory_keeps_safe_fields_and_matches_available_releases(self):
+        inventory = boom.parse_fwupd_inventory(
+            {"Devices": [{
+                "DeviceId": "device-1",
+                "Name": "System Firmware",
+                "Vendor": "Example Vendor",
+                "Version": "1.0",
+                "Serial": "PRIVATE-SERIAL",
+                "Flags": ["updatable", "needs-reboot", "require-ac"],
+            }]},
+            {"Devices": [{
+                "DeviceId": "device-1",
+                "Name": "System Firmware",
+                "Releases": [{"Version": "2.0"}],
+            }]},
+        )
+        self.assertEqual(inventory["devices"], [{
+            "device_id": "device-1",
+            "name": "System Firmware",
+            "vendor": "Example Vendor",
+            "version": "1.0",
+            "updatable": True,
+            "needs_reboot": True,
+            "requires_ac": True,
+        }])
+        self.assertEqual(inventory["updates"], [{
+            "device_id": "device-1",
+            "name": "System Firmware",
+            "current_version": "1.0",
+            "update_version": "2.0",
+            "needs_reboot": True,
+            "requires_ac": True,
+        }])
+        self.assertNotIn("PRIVATE-SERIAL", str(inventory))
+
+    def test_fwupd_query_uses_read_only_json_commands_and_cached_metadata(self):
+        responses = [
+            subprocess.CompletedProcess([], 0, '{"Devices": [{"DeviceId": "d1", "Name": "BIOS", "Flags": ["updatable"]}]}', ""),
+            subprocess.CompletedProcess([], 0, '{"Devices": []}', ""),
+        ]
+        with patch("boom.shutil.which", return_value="/usr/bin/fwupdmgr"), patch(
+            "boom.run_command", side_effect=responses
+        ) as run_command:
+            result = boom.firmware_inventory_info()
+        self.assertEqual(result["state"], "ready")
+        self.assertEqual(result["devices"][0]["name"], "BIOS")
+        self.assertFalse(result["writes_firmware"])
+        self.assertIn("metadados locais", result["source"])
+        self.assertEqual(run_command.call_args_list[0].args[0], ["/usr/bin/fwupdmgr", "get-devices", "--json"])
+        self.assertEqual(run_command.call_args_list[1].args[0], ["/usr/bin/fwupdmgr", "get-updates", "--json"])
+
+    def test_fwupd_query_reports_missing_optional_package(self):
+        with patch("boom.shutil.which", return_value=None), patch("boom.run_command") as run_command:
+            result = boom.firmware_inventory_info()
+        self.assertEqual(result["state"], "missing")
+        self.assertIn("fwupd", result["message"])
+        run_command.assert_not_called()
+
+    def test_fwupd_is_offered_by_the_optional_dependency_installer(self):
+        with patch("boom.intel_i915_adapter_present", return_value=False), patch(
+            "boom.power_profile_control_supported", return_value=False
+        ), patch("boom.gtk3_runtime_available", return_value=True), patch(
+            "boom.appindicator_runtime_available", return_value=True
+        ), patch("boom.shutil.which", return_value=None):
+            packages = {item["package"] for item in boom.optional_tool_status()}
+        self.assertIn("fwupd", packages)
+
+
+class PerformanceHistoryContinuationTests(unittest.TestCase):
+    def test_disk_sampler_derives_rates_from_counter_deltas(self):
+        sampler = boom_performance.DiskIoSampler()
+        before = "259 0 nvme0n1 100 0 200 0 150 0 300 0 0 50 70 0 0 0 0 0 0"
+        after = "259 0 nvme0n1 110 0 210 0 155 0 320 0 0 300 570 0 0 0 0 0 0"
+        self.assertIsNone(sampler.sample(before, sampled_at=10, whole_devices={"nvme0n1"}))
+        result = sampler.sample(after, sampled_at=15, whole_devices={"nvme0n1"})
+        self.assertEqual(result["busy_percent"], 5)
+        self.assertEqual(result["read_bytes_per_second"], 1024)
+        self.assertEqual(result["write_bytes_per_second"], 2048)
+        self.assertEqual(result["average_io_wait_ms"], 33.33)
+
+    def test_local_history_is_opt_in_private_bounded_and_clearable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = boom_performance.PerformanceHistoryStore(
+                database_path=root / "state" / "boom" / "performance.sqlite3",
+                enabled_path=root / "config" / "boom" / "performance-history.enabled",
+            )
+            metrics = {
+                "cpu_percent": 42,
+                "memory": {"used": 8, "total": 10},
+                "gpu_metrics": [{"name": "not persisted", "gpu_utilization_percent": 20}],
+            }
+            self.assertFalse(store.enabled())
+            self.assertFalse(store.record(metrics, sampled_at=1000))
+            self.assertFalse(store.database_path.exists())
+
+            store.set_enabled(True)
+            self.assertTrue(store.enabled())
+            self.assertEqual(stat.S_IMODE(store.enabled_path.stat().st_mode), 0o600)
+            self.assertTrue(store.record(metrics, sampled_at=1000))
+            self.assertFalse(store.record(metrics, sampled_at=1002))
+            self.assertTrue(store.record(metrics, sampled_at=1005))
+            self.assertEqual(stat.S_IMODE(store.database_path.parent.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(store.database_path.stat().st_mode), 0o600)
+            samples = store.samples(window_minutes=1, now=1005)
+            self.assertEqual(len(samples), 2)
+            self.assertNotIn("gpu_name", samples[0])
+            self.assertEqual(store.status(now=1005)["sample_count"], 2)
+
+            store.set_enabled(False)
+            self.assertFalse(store.record(metrics, sampled_at=1010))
+            self.assertEqual(store.status(now=1010)["sample_count"], 2)
+            store.clear()
+            self.assertEqual(store.status(now=1010)["sample_count"], 0)
+            self.assertFalse(store.enabled())
+
+    def test_history_analyzer_requires_a_real_time_window(self):
+        result = boom_performance.analyze_performance_history([
+            {"sampled_at": 1, "cpu_percent": 95}
+        ])
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertEqual(result["confidence"], "none")
+
+    def test_history_analyzer_flags_sustained_cpu_pressure_as_a_hypothesis(self):
+        samples = [
+            {"sampled_at": index * 5, "cpu_percent": 92, "gpu_percent": 30, "ram_percent": 60}
+            for index in range(121)
+        ]
+        result = boom_performance.analyze_performance_history(samples)
+        self.assertEqual(result["status"], "analyzed")
+        self.assertEqual(result["confidence"], "high")
+        self.assertEqual(result["findings"][0]["id"], "possible_cpu_limit")
+        self.assertIn("não prova", result["findings"][0]["message"])
+
+    def test_history_analyzer_ignores_a_short_cpu_spike(self):
+        samples = [
+            {"sampled_at": index * 5, "cpu_percent": 100 if index < 4 else 25, "gpu_percent": 20}
+            for index in range(30)
+        ]
+        result = boom_performance.analyze_performance_history(samples)
+        self.assertEqual(result["status"], "analyzed")
+        self.assertEqual(result["findings"], [])
+        self.assertIn("Nenhuma saturação sustentada", result["summary"])
+
+    def test_history_analyzer_separates_vram_and_temperature_evidence(self):
+        samples = [
+            {"sampled_at": index * 5, "vram_percent": 95, "cpu_temp_celsius": 82}
+            for index in range(20)
+        ]
+        result = boom_performance.analyze_performance_history(samples)
+        finding_ids = {finding["id"] for finding in result["findings"]}
+        self.assertIn("vram_pressure", finding_ids)
+        thermal = next(finding for finding in result["findings"] if finding["id"] == "elevated_cpu_temperature")
+        self.assertIn("não consegue confirmar throttling", thermal["message"])
+
+    def test_history_cli_enables_and_disables_opt_in_recording(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = {
+                "XDG_STATE_HOME": str(root / "state"),
+                "XDG_CONFIG_HOME": str(root / "config"),
+            }
+            output = io.StringIO()
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                boom.sys, "argv", ["boom.py", "--history-enable"]
+            ), contextlib.redirect_stdout(output):
+                self.assertEqual(boom.main(), 0)
+            self.assertTrue(json.loads(output.getvalue())["enabled"])
+            self.assertTrue((root / "config" / "boom" / "performance-history.enabled").exists())
+
+            output = io.StringIO()
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                boom.sys, "argv", ["boom.py", "--history-status"]
+            ), contextlib.redirect_stdout(output):
+                self.assertEqual(boom.main(), 0)
+            self.assertTrue(json.loads(output.getvalue())["enabled"])
+
+            output = io.StringIO()
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                boom.sys, "argv", ["boom.py", "--history-disable"]
+            ), contextlib.redirect_stdout(output):
+                self.assertEqual(boom.main(), 0)
+            self.assertFalse(json.loads(output.getvalue())["enabled"])
+
+
+class SensorAndStressTests(unittest.TestCase):
+    def test_lm_sensors_parser_reads_live_values_and_ignores_thresholds_and_alarms(self):
+        readings = boom.parse_lm_sensors_json({
+            "k10temp-pci-00c3": {
+                "Adapter": "PCI adapter",
+                "Tctl": {"temp1_input": 55.9, "temp1_crit": 95.0, "temp1_crit_alarm": 1.0},
+                "Tccd1": {"temp2_input": 55.9},
+                "fan1": {"fan1_input": 1250.0},
+                "in0": {"in0_input": 1.1},
+                "power1": {"power1_input": 65.2},
+                "invalid": {"temp9_input": 65261.85},
+            }
+        })
+        self.assertEqual([(item["kind"], item["value"], item["unit"]) for item in readings], [
+            ("temperature", 55.9, "°C"), ("temperature", 55.9, "°C"), ("fan", 1250.0, "RPM"),
+            ("voltage", 1.1, "V"), ("power", 65.2, "W"),
+        ])
+        self.assertTrue(all(item["source"] == "lm-sensors" for item in readings))
+
+    def test_stress_cpu_command_is_fixed_and_bounded(self):
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"), patch("boom.os.cpu_count", return_value=12):
+            command = boom.stress_test_command("cpu", 30, workers=2)
+        self.assertEqual(command, [
+            "/usr/bin/stress-ng", "--timeout", "30s", "--metrics-brief", "--oom-avoid", "--abort",
+            "--cpu", "2", "--cpu-load", "80",
+        ])
+        self.assertNotIn("--shell", command)
+
+    def test_stress_ram_command_caps_allocation(self):
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"):
+            command = boom.stress_test_command("memory", 60, available_memory_bytes=8 * 1024**3)
+        self.assertEqual(command[command.index("--vm-bytes") + 1], str(1024**3))
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"):
+            command = boom.stress_test_command("memory", 60, available_memory_bytes=512 * 1024**2)
+        self.assertEqual(command[command.index("--vm-bytes") + 1], str(128 * 1024**2))
+
+    def test_stress_gpu_command_uses_one_fixed_render_node_worker(self):
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"):
+            command = boom.stress_test_command("gpu", 30, gpu_device="/dev/dri/renderD128")
+        self.assertEqual(command, [
+            "/usr/bin/stress-ng", "--timeout", "30s", "--metrics-brief", "--oom-avoid", "--abort",
+            "--gpu", "1", "--gpu-devnode", "/dev/dri/renderD128",
+        ])
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"):
+            with self.assertRaises(ValueError):
+                boom.stress_test_command("gpu", 30, gpu_device="/dev/dri/card0")
+            with self.assertRaises(ValueError):
+                boom.stress_test_command("gpu", 180, gpu_device="/dev/dri/renderD128")
+
+    def test_stress_command_rejects_unsafe_duration_workers_and_memory(self):
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"), patch("boom.os.cpu_count", return_value=2):
+            with self.assertRaises(ValueError):
+                boom.stress_test_command("cpu", 180, workers=1)
+            with self.assertRaises(ValueError):
+                boom.stress_test_command("cpu", 30, workers=3)
+            with self.assertRaises(ValueError):
+                boom.stress_test_command("memory", 30, available_memory_bytes=480 * 1024**2)
+
+    def test_stress_readiness_requires_cpu_sensor_and_cool_hardware(self):
+        temperatures = [{"name": "k10temp · Tctl", "celsius": 55.9}]
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"):
+            self.assertTrue(boom.stress_test_readiness(temperatures)["ready"])
+            hot = boom.stress_test_readiness([{"name": "k10temp · Tctl", "celsius": 80.0}])
+            self.assertFalse(hot["ready"])
+            no_cpu = boom.stress_test_readiness([{"name": "nvme · Composite", "celsius": 40.0}])
+            self.assertFalse(no_cpu["ready"])
+
+    def test_gpu_stress_readiness_requires_live_gpu_temperature_and_safe_thermal_margin(self):
+        temperatures = [{"name": "k10temp · Tctl", "celsius": 55.0}]
+        gpu = {"name": "RTX Test", "pci_address": "0000:0b:00.0", "temperature_celsius": 48.0}
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"), patch(
+            "boom.gpu_render_device", return_value=("/dev/dri/renderD128", None)
+        ):
+            ready = boom.stress_test_readiness(temperatures, "gpu", gpu)
+            self.assertTrue(ready["ready"])
+            self.assertEqual(ready["gpu_device"], "/dev/dri/renderD128")
+            hot_gpu = boom.stress_test_readiness(temperatures, "gpu", gpu, [80.0])
+            self.assertFalse(hot_gpu["ready"])
+            missing_gpu_sensor = boom.stress_test_readiness(temperatures, "gpu", gpu, [])
+            self.assertFalse(missing_gpu_sensor["ready"])
+            self.assertIn("leitura térmica", missing_gpu_sensor["message"])
+
+    def test_gpu_render_node_is_matched_to_adapter_pci_address(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pci_device = root / "sys" / "devices" / "pci0000:00" / "0000:0b:00.0"
+            pci_device.mkdir(parents=True)
+            drm_root = root / "sys" / "class" / "drm"
+            render = drm_root / "renderD128"
+            render.mkdir(parents=True)
+            (render / "device").symlink_to(pci_device)
+            device_root = root / "dev" / "dri"
+            device_root.mkdir(parents=True)
+            (device_root / "renderD128").touch()
+            result = boom.gpu_render_device(
+                {"pci_address": "00000000:0B:00.0"},
+                drm_root=drm_root,
+                device_root=device_root,
+            )
+        self.assertEqual(result, (str(device_root / "renderD128"), None))
+
+    def test_nvidia_gpu_temperature_reader_matches_the_selected_pci_adapter(self):
+        result = subprocess.CompletedProcess(
+            args=["nvidia-smi"],
+            returncode=0,
+            stdout="00000000:0B:00.0, 61\n00000000:0C:00.0, 72\n",
+            stderr="",
+        )
+        with patch("boom.shutil.which", return_value="/usr/bin/nvidia-smi"), patch(
+            "boom.run_command", return_value=result
+        ) as run:
+            temperatures = boom.gpu_temperature_readings({
+                "source": "nvidia-smi/NVML",
+                "pci_address": "0000:0b:00.0",
+            })
+        self.assertEqual(temperatures, [61.0])
+        self.assertIn("temperature.gpu", run.call_args.args[0][1])
+
+    def test_amd_gpu_temperature_reader_uses_its_pci_hwmon(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            pci_root = Path(temporary)
+            hwmon = pci_root / "0000:0b:00.0" / "hwmon" / "hwmon0"
+            hwmon.mkdir(parents=True)
+            (hwmon / "temp1_input").write_text("67250", encoding="utf-8")
+            (hwmon / "temp2_input").write_text("68375", encoding="utf-8")
+            temperatures = boom.gpu_temperature_readings(
+                {"source": "DRM/sysfs · amdgpu", "pci_address": "0000:0b:00.0"},
+                pci_root=pci_root,
+            )
+        self.assertEqual(temperatures, [67.25, 68.375])
+
+    def test_hot_cpu_prevents_stress_process_launch(self):
+        session = boom.StressTestSession()
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"), patch(
+            "boom.temperature_info", return_value=[{"name": "k10temp · Tctl", "celsius": 85.1}]
+        ), patch("boom.subprocess.Popen") as popen:
+            with self.assertRaisesRegex(RuntimeError, "abaixo de 80"):
+                session.start("cpu", 10, 1, 8 * 1024**3)
+        popen.assert_not_called()
+
+    def test_gpu_start_refuses_to_trust_a_stale_cached_temperature(self):
+        session = boom.StressTestSession()
+        gpu = {
+            "name": "RTX Test",
+            "source": "nvidia-smi/NVML",
+            "pci_address": "0000:0b:00.0",
+            "temperature_celsius": 48,
+        }
+        with patch("boom.shutil.which", return_value="/usr/bin/stress-ng"), patch(
+            "boom.temperature_info", return_value=[{"name": "k10temp · Tctl", "celsius": 45.0}]
+        ), patch("boom.gpu_temperature_readings", return_value=[]), patch("boom.subprocess.Popen") as popen:
+            with self.assertRaisesRegex(RuntimeError, "leitura térmica ao vivo"):
+                session.start("gpu", 10, 1, None, gpu)
+        popen.assert_not_called()
+
+    def test_stress_watchdog_stops_process_group_at_thermal_limit(self):
+        class FakeProcess:
+            pid = 4242
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout):
+                self.returncode = -signal.SIGTERM
+                return self.returncode
+
+            def communicate(self, timeout):
+                return "stress metrics", None
+
+        session = boom.StressTestSession()
+        process = FakeProcess()
+        session._state = {"status": "running"}
+        hot_cpu = [{"name": "k10temp · Tctl", "celsius": 85.1}]
+        with patch("boom.temperature_info", return_value=hot_cpu), patch("boom.os.killpg") as killpg, patch.object(
+            boom.threading.Event, "wait", return_value=False
+        ):
+            session._supervise(process, "cpu", 30, boom.time.monotonic())
+        self.assertEqual(session.snapshot()["status"], "cancelled")
+        self.assertIn("85.1 °C", session.snapshot()["message"])
+        killpg.assert_called_once_with(process.pid, signal.SIGTERM)
+
+    def test_gpu_watchdog_stops_when_gpu_reaches_thermal_limit(self):
+        class FakeProcess:
+            pid = 4243
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout):
+                self.returncode = -signal.SIGTERM
+                return self.returncode
+
+            def communicate(self, timeout):
+                return "stress metrics", None
+
+        session = boom.StressTestSession()
+        process = FakeProcess()
+        session._state = {"status": "running"}
+        gpu = {"name": "RTX Test", "pci_address": "0000:0b:00.0"}
+        with patch("boom.temperature_info", return_value=[{"name": "k10temp · Tctl", "celsius": 57.0}]), patch(
+            "boom.gpu_temperature_readings", return_value=[85.1]
+        ), patch("boom.os.killpg") as killpg, patch.object(boom.threading.Event, "wait", return_value=False):
+            session._supervise(process, "gpu", 30, boom.time.monotonic(), gpu)
+        self.assertEqual(session.snapshot()["status"], "cancelled")
+        self.assertIn("85.1 °C", session.snapshot()["message"])
+        killpg.assert_called_once_with(process.pid, signal.SIGTERM)
+
+    def test_gpu_watchdog_stops_when_gpu_temperature_sensor_disappears(self):
+        class FakeProcess:
+            pid = 4244
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout):
+                self.returncode = -signal.SIGTERM
+                return self.returncode
+
+            def communicate(self, timeout):
+                return "stress metrics", None
+
+        session = boom.StressTestSession()
+        process = FakeProcess()
+        session._state = {"status": "running"}
+        with patch("boom.temperature_info", return_value=[{"name": "k10temp · Tctl", "celsius": 57.0}]), patch(
+            "boom.gpu_temperature_readings", return_value=[]
+        ), patch("boom.os.killpg") as killpg, patch.object(boom.threading.Event, "wait", return_value=False):
+            session._supervise(process, "gpu", 30, boom.time.monotonic(), {"pci_address": "0000:0b:00.0"})
+        self.assertEqual(session.snapshot()["status"], "cancelled")
+        self.assertIn("GPU ficou indisponível", session.snapshot()["message"])
+        killpg.assert_called_once_with(process.pid, signal.SIGTERM)
+
+    def test_optional_installer_requests_only_missing_fixed_apt_packages(self):
+        tools = {
+            "lspci": "/usr/bin/lspci",
+            "sensors": None,
+            "stress-ng": "/usr/bin/stress-ng",
+            "smartctl": "/usr/sbin/smartctl",
+            "dmidecode": "/usr/sbin/dmidecode",
+            "fwupdmgr": "/usr/bin/fwupdmgr",
+            "ping": "/usr/bin/ping",
+            "apt-get": "/usr/bin/apt-get",
+            "pkexec": "/usr/bin/pkexec",
+            "fio": "/usr/bin/fio",
+        }
+        update_process = MagicMock()
+        update_process.returncode = 0
+        update_process.communicate.return_value = ("Package lists updated", None)
+        install_process = MagicMock()
+        install_process.returncode = 0
+
+        def install_package(timeout=None):
+            tools["sensors"] = "/usr/bin/sensors"
+            return "installed", None
+
+        install_process.communicate.side_effect = install_package
+        with patch("boom.shutil.which", side_effect=lambda name: tools.get(name)), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True), patch(
+            "boom.power_profile_control_supported", return_value=False
+        ), patch(
+            "boom.subprocess.Popen", side_effect=[update_process, install_process]
+        ) as popen:
+            result = boom.install_missing_optional_dependencies()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["packages"], ["lm-sensors"])
+        self.assertEqual(popen.call_args_list[0].args[0], [
+            "/usr/bin/pkexec", "/usr/bin/apt-get", "update",
+        ])
+        self.assertEqual(popen.call_args_list[1].args[0], [
+            "/usr/bin/pkexec", "/usr/bin/apt-get", "install", "--yes", "--no-install-recommends", "lm-sensors",
+        ])
+        self.assertTrue(all(call.kwargs["start_new_session"] for call in popen.call_args_list))
+
+    def test_optional_tool_list_offers_fio_when_disk_benchmark_dependency_is_missing(self):
+        with patch("boom.shutil.which", side_effect=lambda name: None if name == "fio" else f"/usr/bin/{name}"), patch(
+            "boom.intel_i915_adapter_present", return_value=False
+        ), patch("boom.power_profile_control_supported", return_value=False), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True):
+            self.assertEqual(boom.missing_optional_packages(), ["fio"])
+
+    def test_optional_installer_stops_when_apt_index_refresh_fails(self):
+        tools = {"sensors": None, "apt-get": "/usr/bin/apt-get", "pkexec": "/usr/bin/pkexec"}
+        process = MagicMock()
+        process.returncode = 1
+        process.communicate.return_value = ("Permission denied", None)
+        with patch("boom.shutil.which", side_effect=lambda name: tools.get(name)), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True), patch(
+            "boom.power_profile_control_supported", return_value=False
+        ), patch(
+            "boom.subprocess.Popen", return_value=process
+        ) as popen:
+            result = boom.install_missing_optional_dependencies()
+        self.assertFalse(result["ok"])
+        self.assertIn("Atualização dos índices do APT", result["message"])
+        self.assertEqual(popen.call_count, 1)
+
+    def test_optional_installer_does_not_spawn_when_tools_are_present(self):
+        with patch("boom.shutil.which", return_value="/usr/bin/tool"), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True), patch(
+            "boom.power_profile_control_supported", return_value=False
+        ), patch("boom.subprocess.Popen") as popen:
+            result = boom.install_missing_optional_dependencies()
+        self.assertTrue(result["ok"])
+        popen.assert_not_called()
+
+    def test_optional_installer_offers_missing_gtk_and_tray_packages(self):
+        with patch("boom.shutil.which", return_value="/usr/bin/tool"), patch(
+            "boom.gtk3_runtime_available", return_value=False
+        ), patch("boom.appindicator_runtime_available", return_value=False):
+            packages = set(boom.missing_optional_packages())
+        self.assertTrue({"python3-gi", "gir1.2-gtk-3.0", "gir1.2-ayatanaappindicator3-0.1"}.issubset(packages))
+
+    def test_intel_gpu_tools_are_optional_only_for_detected_i915_hardware(self):
+        with patch("boom.intel_i915_adapter_present", return_value=True), patch("boom.shutil.which", return_value=None):
+            intel_packages = {item["package"] for item in boom.optional_tool_status()}
+        with patch("boom.intel_i915_adapter_present", return_value=False), patch("boom.shutil.which", return_value=None):
+            other_packages = {item["package"] for item in boom.optional_tool_status()}
+        self.assertIn("intel-gpu-tools", intel_packages)
+        self.assertNotIn("intel-gpu-tools", other_packages)
+
+    def test_power_profiles_daemon_is_offered_only_when_cpu_or_platform_profiles_are_supported(self):
+        with patch("boom.power_profile_control_supported", return_value=True), patch(
+            "boom.power_profile_manager_conflict", return_value=False
+        ), patch("boom.shutil.which", side_effect=lambda name: None if name == "powerprofilesctl" else "/usr/bin/tool"), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True):
+            supported = {item["package"] for item in boom.optional_tool_status()}
+        with patch("boom.power_profile_control_supported", return_value=False), patch(
+            "boom.power_profile_manager_conflict", return_value=False
+        ), patch("boom.shutil.which", return_value=None), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True):
+            unsupported = {item["package"] for item in boom.optional_tool_status()}
+        self.assertIn("power-profiles-daemon", supported)
+        self.assertNotIn("power-profiles-daemon", unsupported)
 
 
 class HtmlReportTests(unittest.TestCase):
@@ -142,6 +716,8 @@ class LinuxSnapshotTests(unittest.TestCase):
         self.assertIn("block_devices", snapshot)
         self.assertIn("smart_devices", snapshot)
         self.assertIn("power", snapshot)
+        self.assertIn("sensor_readings", snapshot)
+        self.assertIn("temperatures", snapshot)
         self.assertIn("swap_total", snapshot["memory"])
         self.assertIn("swap_used", snapshot["memory"])
 
@@ -169,6 +745,22 @@ class LinuxSnapshotTests(unittest.TestCase):
 
 
 class HardwareDetailTests(unittest.TestCase):
+    def _make_drm_device(self, root, card_name, pci_address, vendor, driver, product_name):
+        card = root / card_name
+        card.mkdir(parents=True)
+        pci_device = root.parent / "devices" / pci_address
+        pci_device.mkdir(parents=True)
+        drivers = root.parent / "drivers"
+        driver_path = drivers / driver
+        driver_path.mkdir(parents=True, exist_ok=True)
+        (pci_device / "driver").symlink_to(driver_path, target_is_directory=True)
+        (card / "device").symlink_to(pci_device, target_is_directory=True)
+        (pci_device / "vendor").write_text(vendor, encoding="utf-8")
+        (pci_device / "device").write_text("0x1234", encoding="utf-8")
+        if product_name:
+            (pci_device / "product_name").write_text(product_name, encoding="utf-8")
+        return pci_device
+
     def test_meminfo_parser_reports_ram_and_swap_bytes(self):
         parsed = boom.parse_meminfo("""MemTotal:        8192 kB
 MemAvailable:    3072 kB
@@ -212,28 +804,256 @@ SwapFree:        1024 kB
         self.assertEqual(boom.format_frequency(3700), "3.70 GHz")
         self.assertEqual(boom.format_frequency(None), boom.UNAVAILABLE)
 
+    def test_cpu_energy_preference_parser_reads_policy_values_and_common_choices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, current, available in (
+                ("policy0", "balance_performance", "default performance balance_performance power"),
+                ("policy4", "power", "default performance balance_performance power"),
+            ):
+                policy = root / name
+                policy.mkdir()
+                (policy / "energy_performance_preference").write_text(current, encoding="utf-8")
+                (policy / "energy_performance_available_preferences").write_text(available, encoding="utf-8")
+
+            result = boom.cpu_energy_preference_info(root)
+
+        self.assertTrue(result["available"])
+        self.assertIsNone(result["current"])
+        self.assertFalse(result["consistent"])
+        self.assertEqual(result["available_preferences"], ["default", "performance", "balance_performance", "power"])
+        self.assertEqual(len(result["policies"]), 2)
+
+    def test_power_profile_list_parser_accepts_only_known_profile_ids(self):
+        output = "* balanced: Balanced\n  power-saver: Saver\n  performance: Performance\n  unknown: Unknown\n"
+        self.assertEqual(
+            boom.parse_power_profiles_list(output),
+            ["balanced", "power-saver", "performance"],
+        )
+
+    def test_power_profile_set_saves_private_restore_state_and_restores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "boom" / "power-profile-restore.json"
+            initial = {
+                "available": True,
+                "profiles": ["balanced", "performance"],
+                "current": "balanced",
+                "message": "ready",
+            }
+            changed = {**initial, "current": "performance"}
+            calls = [
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "performance\n", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "balanced\n", ""),
+            ]
+            with patch("boom.power_profile_info", side_effect=[initial, changed]), patch(
+                "boom.shutil.which", return_value="/usr/bin/powerprofilesctl"
+            ), patch("boom.run_command", side_effect=calls) as run:
+                applied = boom.set_power_profile("performance", state_path)
+                self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
+                saved = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved, {"restore_profile": "balanced", "applied_profile": "performance"})
+                restored = boom.restore_power_profile(state_path)
+
+        self.assertTrue(applied["ok"])
+        self.assertTrue(restored["ok"])
+        self.assertFalse(state_path.exists())
+        self.assertEqual(run.call_args_list[0].args[0], ["/usr/bin/powerprofilesctl", "set", "performance"])
+        self.assertEqual(run.call_args_list[2].args[0], ["/usr/bin/powerprofilesctl", "set", "balanced"])
+
+    def test_power_profile_set_rejects_profile_not_advertised_by_system(self):
+        with patch("boom.power_profile_info", return_value={
+            "available": True, "profiles": ["balanced"], "current": "balanced", "message": "ready",
+        }), patch("boom.run_command") as run:
+            result = boom.set_power_profile("performance", Path("unused"))
+        self.assertFalse(result["ok"])
+        run.assert_not_called()
+
+    def test_power_profile_failed_change_keeps_or_restores_known_state(self):
+        info = {
+            "available": True,
+            "profiles": ["balanced", "performance"],
+            "current": "balanced",
+            "message": "ready",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            failed_set = subprocess.CompletedProcess([], 1, "", "daemon refused")
+            unchanged = subprocess.CompletedProcess([], 0, "balanced\n", "")
+            with patch("boom.power_profile_info", return_value=info), patch(
+                "boom.shutil.which", return_value="/usr/bin/powerprofilesctl"
+            ), patch("boom.run_command", side_effect=[failed_set, unchanged]):
+                result = boom.set_power_profile("performance", state_path)
+        self.assertFalse(result["ok"])
+        self.assertIn("revertido", result["message"])
+        self.assertFalse(state_path.exists())
+
+    def test_power_profile_failed_rollback_preserves_manual_restore_path(self):
+        info = {
+            "available": True,
+            "profiles": ["balanced", "performance"],
+            "current": "balanced",
+            "message": "ready",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            responses = [
+                subprocess.CompletedProcess([], 1, "", "set failed"),
+                subprocess.CompletedProcess([], 0, "performance\n", ""),
+                subprocess.CompletedProcess([], 1, "", "rollback failed"),
+                subprocess.CompletedProcess([], 0, "performance\n", ""),
+            ]
+            with patch("boom.power_profile_info", return_value=info), patch(
+                "boom.shutil.which", return_value="/usr/bin/powerprofilesctl"
+            ), patch("boom.run_command", side_effect=responses):
+                result = boom.set_power_profile("performance", state_path)
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertFalse(result["ok"])
+        self.assertIn("restauração", result["message"])
+        self.assertEqual(saved, {"restore_profile": "balanced", "applied_profile": "performance"})
+
     def test_nvidia_smi_parser_keeps_units_and_marks_unsupported_fields(self):
-        output = """NVIDIA GeForce RTX 3060, 595.104.02, 18, 21, 48, 2048, 12288, 1830, 7501, 72.50, 170.00, P2
-NVIDIA GeForce RTX 4060, 595.104.02, N/A, N/A, N/A, N/A, N/A, N/A, N/A, N/A, N/A, P8
+        output = """NVIDIA GeForce RTX 3060, 595.104.02, 18, 21, 11, 9, 48, 2048, 12288, 1830, 7501, 72.50, 170.00, P2, 00000000:0B:00.0
+NVIDIA GeForce RTX 4060, 595.104.02, N/A, N/A, N/A, N/A, N/A, N/A, N/A, N/A, N/A, N/A, N/A, P8, 00000000:0C:00.0
 """
         gpus = boom.parse_nvidia_smi_csv(output)
         self.assertEqual(len(gpus), 2)
         self.assertEqual(gpus[0]["name"], "NVIDIA GeForce RTX 3060")
         self.assertEqual(gpus[0]["gpu_utilization_percent"], 18)
+        self.assertEqual(gpus[0]["encoder_utilization_percent"], 11)
+        self.assertEqual(gpus[0]["decoder_utilization_percent"], 9)
         self.assertEqual(gpus[0]["temperature_celsius"], 48)
         self.assertEqual(gpus[0]["graphics_clock_mhz"], 1830)
         self.assertEqual(gpus[0]["power_draw_watts"], 72.5)
+        self.assertEqual(gpus[0]["pci_address"], "00000000:0B:00.0")
         self.assertEqual(gpus[0]["source"], "nvidia-smi/NVML")
         self.assertIsNone(gpus[1]["gpu_utilization_percent"])
 
+    def test_intel_gpu_top_parser_handles_truncated_json_stream_without_inventing_total_usage(self):
+        output = '''[{"engines":{"Render/3D/0":{"busy":47.2,"sema":0.0},"Video/0":{"busy":8.0}},"frequency":{"actual":1250,"unit":"MHz"},"power":{"GPU":18.25,"unit":"W"}}'''
+        metrics = boom.parse_intel_gpu_top_json(output)
+        self.assertEqual(metrics["gpu_utilization_percent"], 47.2)
+        self.assertEqual(metrics["gpu_utilization_label"], "Motor mais ativo")
+        self.assertEqual(metrics["engine_utilization"], {"Render/3D/0": 47.2, "Video/0": 8.0})
+        self.assertEqual(metrics["graphics_clock_mhz"], 1250)
+        self.assertEqual(metrics["power_draw_watts"], 18.25)
+        self.assertNotIn("memory_utilization_percent", metrics)
+
+    def test_intel_gpu_top_uses_fixed_unprivileged_device_query(self):
+        payload = json.dumps({"engines": {"Render/3D/0": {"busy": 22.0}}})
+        process = MagicMock()
+        process.communicate.return_value = (payload, "")
+        process.poll.return_value = 0
+        with patch("boom.shutil.which", return_value="/usr/bin/intel_gpu_top"), patch("boom.subprocess.Popen", return_value=process) as popen:
+            metrics, error = boom.intel_gpu_top_sample("/dev/dri/card3")
+        self.assertIsNone(error)
+        self.assertEqual(metrics["gpu_utilization_percent"], 22)
+        self.assertEqual(popen.call_args.args[0], [
+            "/usr/bin/intel_gpu_top", "-J", "-o", "-", "-s", "500", "-d", "drm:/dev/dri/card3",
+        ])
+        self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertNotIn("shell", popen.call_args.kwargs)
+
+    def test_drm_gpu_telemetry_reads_amd_sysfs_units_and_validates_ranges(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "class" / "drm"
+            root.mkdir(parents=True)
+            device = self._make_drm_device(
+                root, "card0", "0000:03:00.0", "0x1002", "amdgpu", "AMD Radeon Test",
+            )
+            values = {
+                "gpu_busy_percent": "67\n",
+                "mem_busy_percent": "43\n",
+                "mem_info_vram_used": str(3 * 1024**3),
+                "mem_info_vram_total": str(8 * 1024**3),
+                "mem_info_gtt_used": str(512 * 1024**2),
+                "mem_info_gtt_total": str(16 * 1024**3),
+                "current_link_speed": "16.0 GT/s PCIe\n",
+                "current_link_width": "16\n",
+                "pp_dpm_sclk": "0: 300Mhz\n1: 2400Mhz *\n",
+                "pp_dpm_mclk": "0: 96Mhz\n1: 2000Mhz *\n",
+            }
+            for name, value in values.items():
+                (device / name).write_text(value, encoding="utf-8")
+            hwmon = device / "hwmon" / "hwmon0"
+            hwmon.mkdir(parents=True)
+            for name, value in {
+                "temp1_input": "73400\n",
+                "fan1_input": "1120\n",
+                "pwm1": "128\n",
+                "pwm1_max": "255\n",
+                "power1_average": "52000000\n",
+                "power1_cap": "200000000\n",
+                "in0_input": "1030\n",
+                "freq1_input": "2400000000\n",
+                "freq2_input": "2000000000\n",
+            }.items():
+                (hwmon / name).write_text(value, encoding="utf-8")
+
+            metrics, status = boom.drm_gpu_telemetry_info(root)
+
+        gpu = metrics[0]
+        self.assertIn("DRM/sysfs", status)
+        self.assertEqual(gpu["name"], "AMD Radeon Test")
+        self.assertEqual(gpu["driver_name"], "amdgpu")
+        self.assertEqual(gpu["gpu_utilization_percent"], 67)
+        self.assertEqual(gpu["memory_utilization_percent"], 43)
+        self.assertEqual(gpu["vram_used_mib"], 3072)
+        self.assertEqual(gpu["vram_total_mib"], 8192)
+        self.assertEqual(gpu["shared_memory_used_mib"], 512)
+        self.assertEqual(gpu["temperature_celsius"], 73.4)
+        self.assertEqual(gpu["fan_rpm"], 1120)
+        self.assertAlmostEqual(gpu["fan_pwm_percent"], 128 * 100 / 255, places=1)
+        self.assertEqual(gpu["power_draw_watts"], 52)
+        self.assertEqual(gpu["power_limit_watts"], 200)
+        self.assertEqual(gpu["gpu_voltage_volts"], 1.03)
+        self.assertEqual(gpu["graphics_clock_mhz"], 2400)
+        self.assertEqual(gpu["memory_clock_mhz"], 2000)
+        self.assertEqual(gpu["pcie_link_speed"], "16.0 GT/s")
+        self.assertEqual(gpu["pcie_link_width"], 16)
+
+    def test_drm_gpu_telemetry_merges_intel_engine_sample_and_keeps_missing_fields_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "class" / "drm"
+            root.mkdir(parents=True)
+            device = self._make_drm_device(
+                root, "card0", "0000:00:02.0", "0x8086", "i915", "Intel Graphics Test",
+            )
+            (device / "mem_info_vram_total").write_text("0\n", encoding="utf-8")
+            (device / "gpu_busy_percent").write_text("125\n", encoding="utf-8")
+            sample = {
+                "source": "intel_gpu_top/PMU",
+                "gpu_utilization_label": "Motor mais ativo",
+                "gpu_utilization_basis": "maior percentual entre motores gráficos",
+                "gpu_utilization_percent": 47.2,
+                "engine_utilization": {"Render/3D/0": 47.2},
+                "graphics_clock_mhz": 1250,
+            }
+            with patch("boom.intel_gpu_top_sample", return_value=(sample, None)) as sample_gpu:
+                metrics, _ = boom.drm_gpu_telemetry_info(root)
+
+        gpu = metrics[0]
+        self.assertEqual(gpu["gpu_utilization_percent"], 47.2)
+        self.assertEqual(gpu["gpu_utilization_label"], "Motor mais ativo")
+        self.assertEqual(gpu["engine_utilization"], {"Render/3D/0": 47.2})
+        self.assertIsNone(gpu["vram_total_mib"])
+        self.assertNotIn("gpu_busy_percent", gpu)
+        self.assertEqual(gpu["gpu_utilization_basis"], "maior percentual entre motores gráficos")
+        sample_gpu.assert_called_once_with("/dev/dri/card0")
+
     def test_gpu_telemetry_queries_nvidia_backend_and_merges_optional_fields(self):
         main = subprocess.CompletedProcess(args=["nvidia-smi"], returncode=0, stdout=(
-            "NVIDIA GeForce RTX 3060, 595.104.02, 18, 21, 48, 2048, 12288, 1830, 7501, 72.50, 170.00, P2\n"
+            "NVIDIA GeForce RTX 3060, 595.104.02, 18, 21, 12, 6, 48, 2048, 12288, 1830, 7501, 72.50, 170.00, P2, 00000000:0B:00.0\n"
         ), stderr="")
         optional = subprocess.CompletedProcess(args=["nvidia-smi"], returncode=0, stdout="43, 4, 16\n", stderr="")
         with patch("boom.shutil.which", return_value="/usr/bin/nvidia-smi"), patch("boom.run_command", side_effect=[main, optional]) as run:
             metrics, status = boom.gpu_telemetry_info()
         self.assertIn("nvidia-smi/NVML", status)
+        self.assertEqual(metrics[0]["encoder_utilization_percent"], 12)
+        self.assertEqual(metrics[0]["decoder_utilization_percent"], 6)
+        self.assertEqual(metrics[0]["pci_address"], "00000000:0B:00.0")
         self.assertEqual(metrics[0]["fan_percent"], 43)
         self.assertEqual(metrics[0]["pcie_generation"], 4)
         self.assertEqual(metrics[0]["pcie_link_width"], 16)
@@ -473,6 +1293,7 @@ class TrayMonitoringTests(unittest.TestCase):
         self.assertIn("cpu_percent", metrics)
         self.assertIn("memory", metrics)
         self.assertIn("temperatures", metrics)
+        self.assertIn("sensor_readings", metrics)
         self.assertIn("cpu_frequency", metrics)
         self.assertIn("gpu_metrics", metrics)
         self.assertIn("power", metrics)

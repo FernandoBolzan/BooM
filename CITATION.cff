@@ -5,7 +5,7 @@ abstract: "A local Linux system monitor with GTK and terminal interfaces."
 authors:
   - family-names: Bolzan
     given-names: Fernando
-version: 0.1.0
-date-released: 2026-11-01
+version: 0.2.0
+date-released: 2026-11-02
 license: MIT
 repository-code: "https://github.com/FernandoBolzan/BooM"

@@ -1,43 +1,105 @@
-# Changelog
+# Histórico de mudanças
 
-All notable changes to BooM are documented here. This project follows
-[Semantic Versioning](https://semver.org/).
+Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
+[Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
-### Added
+Sem mudanças publicadas.
 
-- Dedicated Memória and Gráficos areas in GTK and `curses`; RAM, swap and per-GPU VRAM telemetry are separated from GPU-core telemetry. `/proc/meminfo` parsing now exposes swap totals and availability.
-- Per-core CPU frequencies from Linux CPUFreq/sysfs, with source labels and live updates.
-- NVIDIA GPU telemetry from the installed `nvidia-smi`/NVML driver, including GPU-core and memory-controller utilization, used/total VRAM and percentage, temperature, graphics and memory clocks, power, fan speed, P-state and current PCIe link when supported.
-- Live CPU, memory, GPU and temperature updates in the open window as well as the StatusNotifier menu.
-- Physical disk inventory with SMART JSON parsing and a user-triggered, authorization-gated, read-only health query.
-- Battery and external power information from Linux `power_supply` sysfs, including an explicit no-battery state.
-- Offline HTML system report from the desktop or CLI; serial numbers, UUIDs and MAC addresses are redacted, IPs/routes may appear, and the saved file is created with owner-only permissions.
+## [0.2.0] - 2026-11-02
 
-### Notes
+Expansão do BooM para monitoramento detalhado, diagnóstico local e testes com
+limites de segurança.
 
-- GPU metrics are vendor-specific in this iteration; non-NVIDIA adapters remain visible in the PCI inventory while live telemetry support is pending.
-- CPUFreq values are identified by source because `scaling_cur_freq` may report the last frequency requested by the driver rather than an instantaneous hardware measurement.
+### Adicionado
+
+- Telemetria de CPU com frequência reportada por núcleo e fonte identificada.
+- Telemetria de GPU por fabricante: NVIDIA via NVML/`nvidia-smi`, AMD via DRM/sysfs
+  e Intel conforme os dados disponíveis no driver. Inclui uso do núcleo e do
+  controlador de memória, VRAM usada/total/percentual, clocks, temperatura,
+  potência, ventoinha, PCIe e codificador/decodificador quando expostos.
+- Áreas dedicadas a **Memória** e **Gráficos**. RAM, swap, VRAM por adaptador e,
+  em AMD, GTT compartilhada são apresentadas separadamente.
+- Leitura de temperaturas, ventoinhas, tensão, corrente e potência por
+  `lm-sensors`, com fallback para `hwmon`/sysfs.
+- Área **Testes** com cargas de CPU, RAM e GPU via `stress-ng`, confirmação,
+  cancelamento, duração limitada e parada térmica.
+- Benchmark sequencial de armazenamento via `fio`, limitado a um arquivo
+  temporário novo de 128 MiB no diretório escolhido, com confirmação,
+  cancelamento e limpeza. Não escreve em dispositivos brutos ou arquivos existentes.
+- Detecção de dependências opcionais ausentes e instalação assistida por APT e
+  polkit. O BooM mostra os pacotes, pede confirmação e instala somente os que faltam.
+- Inventário local de firmware via `fwupd`, informações de bateria/energia e
+  consulta SMART somente leitura após ação explícita.
+- Atividade e taxas aproximadas de leitura/gravação por dispositivo inteiro,
+  calculadas a partir de `/proc/diskstats`.
+- Histórico de desempenho local e opcional, com retenção de até sete dias,
+  controles para pausar/apagar e diagnóstico baseado em regras com evidências.
+- Explicações opcionais desses diagnósticos por um modelo do Ollama local. A
+  análise usa somente achados agregados, apresenta riscos e evidências e nunca
+  aplica recomendações nem persiste a resposta.
+- Perfis de energia oferecidos por `power-profiles-daemon`, quando compatíveis,
+  com confirmação e opção de restaurar o perfil anterior; EPP permanece somente
+  leitura.
+- Atualizações ao vivo na janela GTK e na bandeja, relatório HTML local e
+  dependências GTK/AppIndicator incluídas na verificação assistida.
+
+### Segurança e privacidade
+
+- Instalações, mudanças de perfil, consultas privilegiadas, encerramento de
+  processos e testes exigem ação explícita; controles privilegiados passam pelo
+  polkit. Nenhuma ferramenta opcional é instalada na inicialização.
+- Testes de carga param a 85 °C, se um sensor necessário falhar ou ao atingir
+  120 segundos. A carga de CPU é limitada por worker; o uso de RAM é limitado a
+  25% da memória disponível e a 1 GiB.
+- Histórico desativado por padrão. Os dados permanecem locais, agregados e sem
+  nomes de processos ou identificadores de hardware.
+- A consulta de firmware usa os metadados já disponíveis e não instala firmware.
+  O BooM também não instala drivers de vídeo nem executa ajustes sugeridos por IA.
+
+### Limitações conhecidas
+
+- A disponibilidade e precisão das métricas dependem do hardware, do driver,
+  das permissões e das interfaces expostas pelo kernel. Os caminhos AMD e Intel
+  têm testes com fixtures, mas ainda precisam de validação em hardware físico.
+- Valores CPUFreq identificam a fonte: alguns drivers reportam a frequência
+  solicitada, que pode diferir da frequência física instantânea.
+- Ocupação e espera de disco são estimativas agregadas e não identificam o
+  processo responsável pela atividade.
+- O benchmark `fio` mede I/O sequencial pelo diretório e sistema de arquivos
+  escolhidos; não mede o dispositivo inteiro nem acesso aleatório. Não houve
+  benchmark real de volume durante esta implementação.
+- A explicação de IA exige Ollama e um modelo instalados à parte. Ela usa apenas
+  `127.0.0.1`; inferência remota não é usada.
 
 ## [0.1.0] - 2026-11-01
 
-Initial public Linux release.
+Primeira versão pública do BooM para Linux.
 
-### Added
+### Adicionado
 
-- GTK 3 desktop interface and `curses` terminal interface with seven areas.
-- Local hardware and system inventory, including RAM module details when SMBIOS provides them.
-- Disk and network inventory with an explicit, fixed-target network diagnostic.
-- Process manager with confirmation, PID-reuse protection and `SIGTERM`.
-- Desktop application inventory and safe launch through `.desktop` metadata.
-- Session autostart inventory and BooM autostart control.
-- Ayatana StatusNotifier tray indicator with background CPU, memory and temperature monitoring.
-- JSON system snapshot, unit tests, usage documentation and CI workflow.
-- MIT license.
+- Interface GTK 3 para desktop e interface de terminal com `curses`, inicialmente
+  com sete áreas.
+- Inventário local de hardware e sistema, inclusive detalhes de módulos de RAM
+  quando fornecidos pelo SMBIOS.
+- Inventário de discos e rede, com diagnóstico de rede iniciado explicitamente.
+- Gerenciador de processos com confirmação, proteção contra reutilização de PID
+  e encerramento por `SIGTERM`.
+- Inventário e abertura segura de aplicativos a partir de metadados `.desktop`.
+- Inventário de inicialização da sessão e controle do início automático do BooM.
+- Ícone StatusNotifier/Ayatana com monitoramento em segundo plano.
+- Snapshot JSON, testes automatizados, documentação e fluxo CI para Linux.
+- Licença MIT.
 
-### Notes
+### Observações
 
-- The tray icon requires a working StatusNotifier/AppIndicator host in the desktop session.
-- Hardware details depend on firmware, sensors and permissions. Missing information is reported as unavailable.
-- GTK tray interaction has not been visually verified in every supported desktop environment.
+- O ícone depende de um host StatusNotifier/AppIndicator ativo na sessão gráfica.
+- Detalhes de hardware variam conforme firmware, sensores e permissões; valores
+  indisponíveis são identificados sem estimativas.
+- A interação visual da bandeja ainda não foi verificada em todos os ambientes
+  de desktop compatíveis.
+
+[Unreleased]: https://github.com/FernandoBolzan/BooM/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/FernandoBolzan/BooM/tree/v0.2.0
+[0.1.0]: https://github.com/FernandoBolzan/BooM/tree/v0.1.0
