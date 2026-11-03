@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -9,11 +10,13 @@ import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 
 MAX_VDF_BYTES = 4 * 1024 * 1024
 _VDF_TOKEN = re.compile(r'//[^\r\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+')
 _APP_MANIFEST = re.compile(r"appmanifest_(\d+)\.acf\Z")
+_HEROIC_APP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}\Z")
 _STEAM_ROOT_SUFFIXES = (
     Path(".steam/steam"),
     Path(".steam/root"),
@@ -21,6 +24,38 @@ _STEAM_ROOT_SUFFIXES = (
     Path(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
 )
 _LUTRIS_FLATPAK_APP_ID = "net.lutris.Lutris"
+_HEROIC_FLATPAK_APP_ID = "com.heroicgameslauncher.hgl"
+_HEROIC_JSON_MAX_BYTES = 32 * 1024 * 1024
+_HEROIC_STORES = {
+    "legendary": {
+        "label": "Epic",
+        "cache": "store_cache/legendary_library.json",
+        "cache_key": "library",
+        "installed": "legendaryConfig/legendary/installed.json",
+        "installed_format": "mapping",
+    },
+    "gog": {
+        "label": "GOG",
+        "cache": "store_cache/gog_library.json",
+        "cache_key": "games",
+        "installed": "gog_store/installed.json",
+        "installed_format": "store-list",
+    },
+    "nile": {
+        "label": "Amazon",
+        "cache": "store_cache/nile_library.json",
+        "cache_key": "library",
+        "installed": "nile_config/nile/installed.json",
+        "installed_format": "array",
+    },
+    "sideload": {
+        "label": "Manual",
+        "cache": "sideload_apps/library.json",
+        "cache_key": "games",
+        "installed": "",
+        "installed_format": "library",
+    },
+}
 
 
 def _decode_vdf_token(token: str) -> str:
@@ -400,30 +435,306 @@ def launch_lutris_game(game_id: str | int) -> dict[str, Any]:
     return {"ok": True, "message": "Solicitação de abertura enviada ao Lutris."}
 
 
-def installed_game_list(steam: dict[str, Any], lutris: dict[str, Any]) -> list[dict[str, str]]:
+def discover_heroic_config_dirs(
+    home: Path | None = None,
+    config_home: Path | None = None,
+) -> list[Path]:
+    """Find native and Flatpak Heroic data directories without creating files."""
+    home = home or Path.home()
+    if config_home is None:
+        configured = os.environ.get("XDG_CONFIG_HOME")
+        configured_path = Path(configured).expanduser() if configured else None
+        config_home = (
+            configured_path
+            if configured_path and configured_path.is_absolute()
+            else home / ".config"
+        )
+    candidates = [
+        config_home / "heroic",
+        home / f".var/app/{_HEROIC_FLATPAK_APP_ID}/config/heroic",
+    ]
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+            if not resolved.is_dir():
+                continue
+            identity = os.path.normcase(str(resolved))
+            if identity not in seen:
+                seen.add(identity)
+                roots.append(resolved)
+        except OSError:
+            continue
+    return roots
+
+
+def _read_heroic_json(path: Path) -> Any:
+    if path.stat().st_size > _HEROIC_JSON_MAX_BYTES:
+        raise ValueError("Arquivo de biblioteca Heroic maior que o limite de leitura.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _heroic_installed_index(path: Path, data_format: str) -> dict[str, dict[str, Any]]:
+    payload = _read_heroic_json(path)
+    if data_format == "mapping":
+        if not isinstance(payload, dict):
+            raise ValueError("Índice Epic/Heroic inválido.")
+        return {
+            str(app_name): metadata
+            for app_name, metadata in payload.items()
+            if isinstance(metadata, dict)
+        }
+    if data_format == "store-list":
+        entries = payload.get("installed") if isinstance(payload, dict) else None
+    else:
+        entries = payload
+    if not isinstance(entries, list):
+        raise ValueError("Índice de jogos instalados Heroic inválido.")
+    installed: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        app_name = entry.get("appName") or entry.get("app_name") or entry.get("id")
+        if isinstance(app_name, str) and app_name:
+            installed[app_name] = entry
+    return installed
+
+
+def _heroic_install_exists(
+    game: dict[str, Any],
+    installed_info: dict[str, Any] | None,
+    runner: str,
+) -> bool:
+    install = game.get("install")
+    install = install if isinstance(install, dict) else {}
+    installed_info = installed_info if isinstance(installed_info, dict) else {}
+    possible_paths = [
+        install.get("install_path"),
+        installed_info.get("install_path"),
+        installed_info.get("path"),
+    ]
+    if runner == "sideload":
+        possible_paths.insert(0, install.get("executable"))
+    for value in possible_paths:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        candidate = Path(value).expanduser()
+        if candidate.is_absolute() and candidate.exists():
+            return True
+    return False
+
+
+def _heroic_library_games(config_dir: Path, runner: str) -> tuple[list[dict[str, str]], bool, int]:
+    store = _HEROIC_STORES[runner]
+    cache_path = config_dir / str(store["cache"])
+    if not cache_path.is_file():
+        return [], False, 0
+    try:
+        payload = _read_heroic_json(cache_path)
+        entries = payload.get(str(store["cache_key"])) if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            raise ValueError("Cache de biblioteca Heroic sem a lista esperada.")
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return [], True, 1
+
+    installed_index: dict[str, dict[str, Any]] = {}
+    if runner != "sideload":
+        installed_path = config_dir / str(store["installed"])
+        if not installed_path.is_file():
+            has_installed_cache_entries = any(
+                isinstance(entry, dict) and entry.get("is_installed") is True
+                for entry in entries
+            )
+            return [], True, int(has_installed_cache_entries)
+        try:
+            installed_index = _heroic_installed_index(
+                installed_path,
+                str(store["installed_format"]),
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            return [], True, 1
+
+    games: list[dict[str, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("is_installed") is not True:
+            continue
+        if entry.get("runner") != runner:
+            continue
+        install = entry.get("install")
+        if isinstance(install, dict) and install.get("is_dlc") is True:
+            continue
+        app_name = entry.get("app_name")
+        title = entry.get("title")
+        if not isinstance(app_name, str) or not _HEROIC_APP_NAME.fullmatch(app_name):
+            continue
+        installed_info = None if runner == "sideload" else installed_index.get(app_name)
+        if runner != "sideload" and installed_info is None:
+            continue
+        if not _heroic_install_exists(entry, installed_info, runner):
+            continue
+        if not isinstance(title, str):
+            continue
+        safe_name = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", title).strip()
+        if not safe_name:
+            continue
+        games.append({
+            "game_id": app_name,
+            "name": safe_name,
+            "runner": runner,
+            "store": str(store["label"]),
+        })
+    return games, True, 0
+
+
+def heroic_library_info(
+    home: Path | None = None,
+    config_home: Path | None = None,
+) -> dict[str, Any]:
+    """Read installed Heroic games from its local store caches and install indexes only."""
+    roots = discover_heroic_config_dirs(home=home, config_home=config_home)
+    if not roots:
+        return {
+            "state": "not-installed",
+            "message": "Nenhuma biblioteca local do Heroic foi encontrada.",
+            "games": [],
+            "config_count": 0,
+            "library_count": 0,
+            "source": "caches locais do Heroic",
+        }
+
+    # The Heroic URI cannot select a config root, so one row per runner/app ID
+    # is actionable. Config discovery is ordered native/XDG before Flatpak.
+    games_by_id: dict[tuple[str, str], dict[str, str]] = {}
+    libraries = 0
+    errors = 0
+    for config_dir in roots:
+        for runner in _HEROIC_STORES:
+            games, found, store_errors = _heroic_library_games(config_dir, runner)
+            libraries += int(found)
+            errors += store_errors
+            for game in games:
+                games_by_id.setdefault((game["runner"], game["game_id"]), game)
+
+    games = sorted(
+        games_by_id.values(),
+        key=lambda game: (game["name"].casefold(), game["store"], game["game_id"]),
+    )
+    if errors:
+        state = "partial" if games else "error"
+        message = (
+            f"{len(games)} jogo(s) Heroic lido(s); dados de {errors} biblioteca(s) "
+            "não puderam ser confirmados."
+        )
+    elif games:
+        state = "ready"
+        message = f"{len(games)} jogo(s) Heroic instalado(s) em {libraries} biblioteca(s) local(is)."
+    else:
+        state = "empty"
+        message = "Heroic encontrado; nenhum jogo instalado com arquivos locais válidos foi localizado."
+    return {
+        "state": state,
+        "message": message,
+        "games": games,
+        "config_count": len(roots),
+        "library_count": libraries,
+        "source": "caches e índices locais de instalação do Heroic",
+    }
+
+
+def heroic_game_uri(app_name: str, runner: str) -> str:
+    if not isinstance(runner, str) or runner not in _HEROIC_STORES:
+        raise ValueError("Loja Heroic inválida.")
+    if not isinstance(app_name, str) or not _HEROIC_APP_NAME.fullmatch(app_name):
+        raise ValueError("ID de jogo Heroic inválido.")
+    query = urlencode({"appName": app_name, "runner": runner})
+    return f"heroic://launch?{query}"
+
+
+def launch_heroic_game(app_name: str, runner: str) -> dict[str, Any]:
+    """Forward an explicitly selected game to Heroic's registered launch URI."""
+    try:
+        uri = heroic_game_uri(app_name, runner)
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+    opener = shutil.which("xdg-open")
+    if not opener:
+        return {"ok": False, "message": "O comando xdg-open não está disponível para abrir o jogo no Heroic."}
+    try:
+        subprocess.Popen(
+            [opener, uri],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as exc:
+        return {"ok": False, "message": f"Não foi possível encaminhar a abertura ao Heroic: {exc}"}
+    return {"ok": True, "message": "Solicitação de abertura enviada ao Heroic."}
+
+
+def installed_game_list(
+    steam: dict[str, Any],
+    lutris: dict[str, Any],
+    heroic: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     games: list[dict[str, str]] = []
     for game in steam.get("games", []):
         app_id = str(game.get("app_id", ""))
+        name = game.get("name")
         try:
             steam_game_uri(app_id)
         except ValueError:
             continue
-        games.append({"name": game["name"], "launcher": "Steam", "game_id": app_id})
+        if not isinstance(name, str) or not name.strip():
+            continue
+        games.append({"name": name, "launcher": "Steam", "store": "", "game_id": app_id, "runner": ""})
     for game in lutris.get("games", []):
         game_id = str(game.get("game_id", ""))
+        name = game.get("name")
         try:
             lutris_game_uri(game_id)
         except ValueError:
             continue
-        games.append({"name": game["name"], "launcher": "Lutris", "game_id": game_id})
-    return sorted(games, key=lambda game: (game["name"].casefold(), game["launcher"], game["game_id"]))
+        if not isinstance(name, str) or not name.strip():
+            continue
+        games.append({"name": name, "launcher": "Lutris", "store": "", "game_id": game_id, "runner": ""})
+    for game in (heroic or {}).get("games", []):
+        app_name = game.get("game_id")
+        runner = game.get("runner")
+        name = game.get("name")
+        store = game.get("store")
+        try:
+            heroic_game_uri(app_name, runner)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(name, str) or not name.strip() or not isinstance(store, str):
+            continue
+        games.append({
+            "name": name,
+            "launcher": "Heroic",
+            "store": store,
+            "game_id": app_name,
+            "runner": runner,
+        })
+    return sorted(
+        games,
+        key=lambda game: (game["name"].casefold(), game["launcher"], game["store"], game["game_id"]),
+    )
 
 
-def launch_installed_game(launcher: str, game_id: str | int) -> dict[str, Any]:
+def launch_installed_game(
+    launcher: str,
+    game_id: str | int,
+    runner: str | None = None,
+) -> dict[str, Any]:
     if launcher == "Steam":
         return launch_steam_game(game_id)
     if launcher == "Lutris":
         return launch_lutris_game(game_id)
+    if launcher == "Heroic" and isinstance(game_id, str) and isinstance(runner, str):
+        return launch_heroic_game(game_id, runner)
     return {"ok": False, "message": "Este lançador de jogos não é compatível."}
 
 

@@ -54,6 +54,7 @@ from boom_sysbench import (
 from boom_test_workflow import TestSessions, test_action_for_shortcut, test_action_legend
 from boom_games import (
     STEAM_LAUNCH_OPTIONS,
+    heroic_library_info,
     gaming_tool_status,
     installed_game_list,
     launch_installed_game,
@@ -3202,13 +3203,15 @@ def autostart_list() -> list[dict[str, str]]:
 def collect_manager_state() -> dict[str, Any]:
     steam = steam_library_info()
     lutris = lutris_library_info()
+    heroic = heroic_library_info()
     return {
         "processes": process_list(),
         "applications": desktop_application_list(),
         "startup": autostart_list(),
         "steam": steam,
         "lutris": lutris,
-        "games": installed_game_list(steam, lutris),
+        "heroic": heroic,
+        "games": installed_game_list(steam, lutris, heroic),
     }
 
 
@@ -3606,6 +3609,7 @@ def run_tui() -> None:
             "processes": [], "applications": [], "startup": [],
             "steam": {"state": "unchecked", "message": "Steam ainda não foi consultado.", "games": []},
             "lutris": {"state": "unchecked", "message": "Lutris ainda não foi consultado.", "games": []},
+            "heroic": {"state": "unchecked", "message": "Heroic ainda não foi consultado.", "games": []},
             "games": [],
         }
         firmware_info: dict[str, Any] = {"state": "unchecked", "devices": [], "updates": []}
@@ -3734,7 +3738,7 @@ def run_tui() -> None:
                     status = "Nenhum jogo selecionado."
                     return
                 game = games[selected]
-                result = launch_installed_game(game["launcher"], game["game_id"])
+                result = launch_installed_game(game["launcher"], game["game_id"], game.get("runner"))
                 status = f"{game['name']}: {result['message']}"
                 return
             applications = manager.get("applications", [])
@@ -4435,10 +4439,12 @@ def run_tui() -> None:
                 if programs_mode == "games":
                     steam = manager.get("steam", {})
                     lutris = manager.get("lutris", {})
+                    heroic = manager.get("heroic", {})
                     games = manager.get("games", [])
                     curses_text(stdscr, y, 2, "BIBLIOTECAS LOCAIS DE JOGOS", attr=curses.color_pair(2) | curses.A_BOLD); y += 1
                     curses_text(stdscr, y, 2, "Steam: " + steam.get("message", "indisponível"), width=width - 4); y += 1
                     curses_text(stdscr, y, 2, "Lutris: " + lutris.get("message", "indisponível"), width=width - 4); y += 1
+                    curses_text(stdscr, y, 2, "Heroic: " + heroic.get("message", "indisponível"), width=width - 4); y += 1
                     tool_states = {item["name"]: item["installed"] for item in gaming_tool_status()}
                     curses_text(
                         stdscr, y, 2,
@@ -4447,15 +4453,16 @@ def run_tui() -> None:
                         width=width - 4,
                     ); y += 1
                     curses_text(stdscr, y, 2, "Opções Steam: mangohud %command% · gamemoderun %command%", width=width - 4); y += 1
-                    visible = max(1, height - 15)
+                    visible = max(1, height - 16)
                     first = max(0, min(selected - visible + 1, len(games) - visible))
                     for index in range(first, min(len(games), first + visible)):
                         game = games[index]
                         marker = ">" if index == selected else " "
-                        line = f"{marker} {game['name']} · {game['launcher']} · ID {game['game_id']}"
+                        store_label = f"/{game['store']}" if game.get("store") else ""
+                        line = f"{marker} {game['name']} · {game['launcher']}{store_label} · ID {game['game_id']}"
                         curses_text(stdscr, y, 2, line, width=width - 4, attr=curses.color_pair(3) if index == selected else 0); y += 1
                     if not games:
-                        curses_text(stdscr, y, 2, "Nenhum jogo instalado foi encontrado em Steam ou Lutris."); y += 1
+                        curses_text(stdscr, y, 2, "Nenhum jogo instalado foi encontrado em Steam, Lutris ou Heroic."); y += 1
                 else:
                     applications = manager.get("applications", [])
                     visible = max(1, height - 10)
@@ -4487,7 +4494,7 @@ def run_tui() -> None:
                 controls = (
                     "G alternar apps/jogos · ↑↓ navegar · L abrir no lançador · I instalar ferramentas · R atualizar · Q sair"
                     if programs_mode == "games" else
-                    "G jogos Steam/Lutris · ↑↓ navegar · L abrir aplicativo · R atualizar · Q sair"
+                    "G jogos Steam/Lutris/Heroic · ↑↓ navegar · L abrir aplicativo · R atualizar · Q sair"
                 )
             else:
                 controls = "1-9/0 telas · R atualizar · ↑↓ navegar/rolar · Q sair"
@@ -4509,7 +4516,7 @@ def run_tui() -> None:
             elif key in (ord("g"), ord("G")) and page == PAGE_APPLICATIONS:
                 programs_mode = "applications" if programs_mode == "games" else "games"
                 selected = 0
-                status = "Jogos locais de Steam e Lutris." if programs_mode == "games" else "Lista de aplicativos gráficos."
+                status = "Jogos locais de Steam, Lutris e Heroic." if programs_mode == "games" else "Lista de aplicativos gráficos."
             elif key in (ord("n"), ord("N")) and page == PAGE_NETWORK:
                 status = "Testando conectividade; aguarde…"
                 net_results = run_network_test(data)
@@ -4656,6 +4663,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 "processes": [], "applications": [], "startup": [], "games": [],
                 "steam": {"state": "unchecked", "message": "Steam ainda não foi consultado.", "games": []},
                 "lutris": {"state": "unchecked", "message": "Lutris ainda não foi consultado.", "games": []},
+                "heroic": {"state": "unchecked", "message": "Heroic ainda não foi consultado.", "games": []},
             }
             self.page = PAGE_OVERVIEW
             self.network_results: list[dict[str, Any]] = []
@@ -6802,21 +6810,28 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
         def render_steam_library_section(self) -> None:
             steam = self.manager_data.get("steam", {})
             lutris = self.manager_data.get("lutris", {})
+            heroic = self.manager_data.get("heroic", {})
             games = self.manager_data.get("games", [])
             library = self.card("Bibliotecas locais de jogos")
             self.add_row(library, "Steam", steam.get("message", "Biblioteca não consultada."))
             self.add_row(library, "Cliente", steam.get("steam_client", "Não detectado"))
             self.add_row(library, "Lutris", lutris.get("message", "Biblioteca não consultada."))
             self.add_row(library, "Bases Lutris", str(lutris.get("database_count", 0)))
+            self.add_row(library, "Heroic", heroic.get("message", "Biblioteca não consultada."))
+            self.add_row(library, "Caches Heroic", str(heroic.get("library_count", 0)))
             if games:
-                store = Gtk.ListStore(str, str, str)
+                store = Gtk.ListStore(str, str, str, str, str)
                 for game in games:
-                    store.append([game["name"], game["launcher"], game["game_id"]])
+                    store.append([
+                        game["name"], game["launcher"], game.get("store", ""),
+                        game["game_id"], game.get("runner", ""),
+                    ])
                 tree = Gtk.TreeView(model=store)
                 tree.set_headers_visible(True)
                 self.add_tree_column(tree, "Jogo instalado", 0, True)
                 self.add_tree_column(tree, "Lançador", 1, False)
-                self.add_tree_column(tree, "ID local", 2, False)
+                self.add_tree_column(tree, "Loja", 2, False)
+                self.add_tree_column(tree, "ID local", 3, False)
                 selection = tree.get_selection()
                 selection.set_mode(Gtk.SelectionMode.SINGLE)
                 list_scroll = Gtk.ScrolledWindow()
@@ -6833,7 +6848,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             else:
                 hint = Gtk.Label(
                     label=(
-                        "O BooM lê manifestos locais do Steam e a base local do Lutris. Não acessa contas, "
+                        "O BooM lê bibliotecas locais do Steam, Lutris e Heroic. Não acessa contas, "
                         "não baixa jogos e não executa comandos de instalação."
                     )
                 )
@@ -6905,8 +6920,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 return
             name = model.get_value(iterator, 0)
             launcher = model.get_value(iterator, 1)
-            game_id = model.get_value(iterator, 2)
-            result = launch_installed_game(launcher, game_id)
+            game_id = model.get_value(iterator, 3)
+            runner = model.get_value(iterator, 4)
+            result = launch_installed_game(launcher, game_id, runner or None)
             self.refresh_state.set_text(f"{name}: {result['message']}")
 
         def copy_steam_launch_option(self, _button: Any, command: str) -> None:

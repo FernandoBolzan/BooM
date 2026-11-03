@@ -7,7 +7,7 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ### Adicionado
 
-- **Programas** combina jogos locais Steam e Lutris. Lê a base SQLite do Lutris em modo somente leitura e encaminha a abertura do jogo selecionado ao lançador, sem acessar contas, baixar ou instalar jogos.
+- **Programas** combina jogos instalados locais de Steam, Lutris e Heroic. Lê a base SQLite do Lutris em modo somente leitura e os caches/índices de instalação locais do Heroic (Epic, GOG, Amazon e jogos adicionados manualmente), incluindo configurações nativas e Flatpak. A abertura é encaminhada ao lançador só após a seleção; o BooM não acessa contas, baixa ou instala jogos.
 
 - **Testes** amplia o benchmark de disco com sequencial de 1 MiB e aleatório 4 KiB: leitura/escrita em QD1/QD32, quatro perfis de 5 s, sempre no mesmo arquivo temporário privado de 128 MiB. Mantém confirmação, cancelamento, limite total de 120 s e limpeza; não acessa dispositivos brutos.
 
