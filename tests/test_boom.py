@@ -1493,7 +1493,11 @@ class GtkThemeTests(unittest.TestCase):
     def test_navigation_defers_render_and_avoids_toggle_buttons(self):
         source = inspect.getsource(boom.launch_gtk)
         navigation = source.split("def on_navigation", 1)[1].split("def render_scheduled_page", 1)[0]
-        self.assertIn("Gtk.Button(label=title)", source)
+        self.assertIn("button = Gtk.Button()", source)
+        self.assertIn("button.get_accessible().set_name(self.titles[index])", source)
+        self.assertIn("NAVIGATION_ICONS[index]", source)
+        self.assertIn('button.connect("clicked", self.on_navigation, index)', source)
+        self.assertNotIn("Gtk.ToggleButton", source)
         self.assertIn("titles = list(NAVIGATION_PAGES)", source)
         self.assertIn("GLib.idle_add(self.render_scheduled_page)", navigation)
         self.assertNotIn("set_active(", navigation)
