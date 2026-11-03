@@ -7,6 +7,7 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ### Adicionado
 
+- **Programas** descobre jogos completos nos manifestos das bibliotecas Steam locais, abre o jogo selecionado pelo URI do Steam e fornece opções copiáveis para MangoHud e GameMode. A leitura é local; o BooM não modifica opções da conta/jogo, instala jogos ou inventa medições de FPS.
 - **Programas** desinstala aplicativos identificados por APT ou Flatpak após
   confirmação; APT purga o pacote e bloqueia remoções de outros pacotes, e
   Flatpak também apaga os dados associados do aplicativo.

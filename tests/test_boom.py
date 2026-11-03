@@ -527,6 +527,8 @@ class SensorAndStressTests(unittest.TestCase):
             "apt-get": "/usr/bin/apt-get",
             "pkexec": "/usr/bin/pkexec",
             "fio": "/usr/bin/fio",
+            "mangohud": "/usr/bin/mangohud",
+            "gamemoderun": "/usr/bin/gamemoderun",
         }
         update_process = MagicMock()
         update_process.returncode = 0
@@ -564,6 +566,14 @@ class SensorAndStressTests(unittest.TestCase):
             "boom.gtk3_runtime_available", return_value=True
         ), patch("boom.appindicator_runtime_available", return_value=True):
             self.assertEqual(boom.missing_optional_packages(), ["fio"])
+
+    def test_optional_tool_list_includes_mangohud_and_gamemode_for_game_support(self):
+        with patch("boom.shutil.which", side_effect=lambda name: None if name in {"mangohud", "gamemoderun"} else f"/usr/bin/{name}"), patch(
+            "boom.intel_i915_adapter_present", return_value=False
+        ), patch("boom.power_profile_control_supported", return_value=False), patch(
+            "boom.gtk3_runtime_available", return_value=True
+        ), patch("boom.appindicator_runtime_available", return_value=True):
+            self.assertEqual(set(boom.missing_optional_packages()), {"mangohud", "gamemode"})
 
     def test_optional_installer_stops_when_apt_index_refresh_fails(self):
         tools = {"sensors": None, "apt-get": "/usr/bin/apt-get", "pkexec": "/usr/bin/pkexec"}

@@ -41,6 +41,12 @@ from boom_disk_benchmark import (
     disk_benchmark_readiness,
 )
 from boom_test_workflow import TestSessions, test_action_for_shortcut, test_action_legend
+from boom_games import (
+    STEAM_LAUNCH_OPTIONS,
+    gaming_tool_status,
+    launch_steam_game,
+    steam_library_info,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -120,6 +126,8 @@ OPTIONAL_TOOL_PACKAGES = (
     ("ping", "iputils-ping"),
     ("stress-ng", "stress-ng"),
     ("fio", "fio"),
+    ("mangohud", "mangohud"),
+    ("gamemoderun", "gamemode"),
 )
 POWER_PROFILE_IDS = ("power-saver", "balanced", "performance")
 POWER_PROFILE_LABELS = {
@@ -3174,6 +3182,7 @@ def collect_manager_state() -> dict[str, Any]:
         "processes": process_list(),
         "applications": desktop_application_list(),
         "startup": autostart_list(),
+        "steam": steam_library_info(),
     }
 
 
@@ -3566,7 +3575,10 @@ def run_tui() -> None:
         pages = NAVIGATION_PAGES
         page = PAGE_OVERVIEW
         data: dict[str, Any] = {}
-        manager: dict[str, Any] = {"processes": [], "applications": [], "startup": []}
+        manager: dict[str, Any] = {
+            "processes": [], "applications": [], "startup": [],
+            "steam": {"state": "unchecked", "message": "Steam ainda não foi consultado.", "games": []},
+        }
         firmware_info: dict[str, Any] = {"state": "unchecked", "devices": [], "updates": []}
         net_results: list[dict[str, Any]] = []
         ai_lock = threading.Lock()
@@ -3579,6 +3591,7 @@ def run_tui() -> None:
             "result": None,
         }
         selected = 0
+        programs_mode = "applications"
         selected_gpu_index = 0
         page_scroll = {PAGE_SYSTEM: 0, PAGE_MEMORY: 0, PAGE_GRAPHICS: 0}
         page_max_scroll = {PAGE_SYSTEM: 0, PAGE_MEMORY: 0, PAGE_GRAPHICS: 0}
@@ -3686,6 +3699,14 @@ def run_tui() -> None:
 
         def open_selected_app() -> None:
             nonlocal status
+            if programs_mode == "games":
+                games = manager.get("steam", {}).get("games", [])
+                if not games or selected >= len(games):
+                    status = "Nenhum jogo Steam selecionado."
+                    return
+                result = launch_steam_game(games[selected]["app_id"])
+                status = result["message"]
+                return
             applications = manager.get("applications", [])
             if not applications or selected >= len(applications):
                 status = "Nenhum aplicativo selecionado."
@@ -4314,16 +4335,40 @@ def run_tui() -> None:
                 if not processes:
                     curses_text(stdscr, y, 2, "Nenhum processo visível."); y += 1
             elif page == PAGE_APPLICATIONS:
-                applications = manager.get("applications", [])
-                visible = max(1, height - 10)
-                first = max(0, min(selected - visible + 1, len(applications) - visible))
-                for index in range(first, min(len(applications), first + visible)):
-                    app = applications[index]
-                    marker = ">" if index == selected else " "
-                    line = f"{marker} {app['name']} · {app['id']}" + (" · executável ausente" if not app["available"] else "")
-                    curses_text(stdscr, y, 2, line, width=width - 4, attr=curses.color_pair(3) if index == selected else 0); y += 1
-                if not applications:
-                    curses_text(stdscr, y, 2, "Nenhum lançador .desktop encontrado."); y += 1
+                if programs_mode == "games":
+                    steam = manager.get("steam", {})
+                    games = steam.get("games", [])
+                    curses_text(stdscr, y, 2, "BIBLIOTECA STEAM", attr=curses.color_pair(2) | curses.A_BOLD); y += 1
+                    curses_text(stdscr, y, 2, steam.get("message", "Biblioteca Steam indisponível."), width=width - 4); y += 1
+                    curses_text(stdscr, y, 2, f"Cliente Steam: {steam.get('steam_client', 'não detectado')}", width=width - 4); y += 1
+                    tool_states = {item["name"]: item["installed"] for item in gaming_tool_status()}
+                    curses_text(
+                        stdscr, y, 2,
+                        f"MangoHud: {'instalado' if tool_states.get('MangoHud') else 'ausente'} · "
+                        f"GameMode: {'instalado' if tool_states.get('GameMode') else 'ausente'}",
+                        width=width - 4,
+                    ); y += 1
+                    curses_text(stdscr, y, 2, "Opções Steam: mangohud %command% · gamemoderun %command%", width=width - 4); y += 1
+                    visible = max(1, height - 14)
+                    first = max(0, min(selected - visible + 1, len(games) - visible))
+                    for index in range(first, min(len(games), first + visible)):
+                        game = games[index]
+                        marker = ">" if index == selected else " "
+                        line = f"{marker} {game['name']} · AppID {game['app_id']}"
+                        curses_text(stdscr, y, 2, line, width=width - 4, attr=curses.color_pair(3) if index == selected else 0); y += 1
+                    if not games:
+                        curses_text(stdscr, y, 2, "Nenhum jogo instalado nesta biblioteca Steam."); y += 1
+                else:
+                    applications = manager.get("applications", [])
+                    visible = max(1, height - 10)
+                    first = max(0, min(selected - visible + 1, len(applications) - visible))
+                    for index in range(first, min(len(applications), first + visible)):
+                        app = applications[index]
+                        marker = ">" if index == selected else " "
+                        line = f"{marker} {app['name']} · {app['id']}" + (" · executável ausente" if not app["available"] else "")
+                        curses_text(stdscr, y, 2, line, width=width - 4, attr=curses.color_pair(3) if index == selected else 0); y += 1
+                    if not applications:
+                        curses_text(stdscr, y, 2, "Nenhum lançador .desktop encontrado."); y += 1
             else:
                 startup = manager.get("startup", [])
                 curses_text(stdscr, y, 2, "ESTADO       ORIGEM     PROGRAMA", attr=curses.color_pair(2) | curses.A_BOLD); y += 1
@@ -4340,6 +4385,12 @@ def run_tui() -> None:
                 controls = f"1-9/0 telas · R atualizar · I instalar · {test_action_legend()} · [/] GPU · X cancelar · Q sair"
             elif page == PAGE_PROCESSES:
                 controls = "↑↓ navegar · K processo · T/t árvore · R atualizar · Q sair"
+            elif page == PAGE_APPLICATIONS:
+                controls = (
+                    "G alternar apps/jogos · ↑↓ navegar · L abrir no Steam · I instalar ferramentas · R atualizar · Q sair"
+                    if programs_mode == "games" else
+                    "G jogos Steam · ↑↓ navegar · L abrir aplicativo · R atualizar · Q sair"
+                )
             else:
                 controls = "1-9/0 telas · R atualizar · ↑↓ navegar/rolar · Q sair"
             curses_text(stdscr, height - 1, 2, controls, width=width - 4)
@@ -4357,6 +4408,10 @@ def run_tui() -> None:
                     page_scroll[page] = 0
             elif key in (ord("r"), ord("R")):
                 refresh()
+            elif key in (ord("g"), ord("G")) and page == PAGE_APPLICATIONS:
+                programs_mode = "applications" if programs_mode == "games" else "games"
+                selected = 0
+                status = "Lista de jogos Steam." if programs_mode == "games" else "Lista de aplicativos gráficos."
             elif key in (ord("n"), ord("N")) and page == PAGE_NETWORK:
                 status = "Testando conectividade; aguarde…"
                 net_results = run_network_test(data)
@@ -4375,7 +4430,12 @@ def run_tui() -> None:
                 else:
                     selected = max(0, selected - 1)
             elif key in (curses.KEY_DOWN, ord("j")) and page in (PAGE_PROCESSES, PAGE_APPLICATIONS):
-                limit = len(manager.get("processes", [])) if page == PAGE_PROCESSES else len(manager.get("applications", []))
+                if page == PAGE_PROCESSES:
+                    limit = len(manager.get("processes", []))
+                elif programs_mode == "games":
+                    limit = len(manager.get("steam", {}).get("games", []))
+                else:
+                    limit = len(manager.get("applications", []))
                 selected = min(max(0, limit - 1), selected + 1)
             elif key in (ord("l"), ord("L")) and page == PAGE_APPLICATIONS:
                 open_selected_app()
@@ -4394,7 +4454,10 @@ def run_tui() -> None:
                     confirm_disk_benchmark()
                 elif action:
                     confirm_stress_test(action.kind)
-            elif key in (ord("i"), ord("I")) and page in (PAGE_SYSTEM, PAGE_TESTS):
+            elif key in (ord("i"), ord("I")) and (
+                page in (PAGE_SYSTEM, PAGE_TESTS)
+                or (page == PAGE_APPLICATIONS and programs_mode == "games")
+            ):
                 confirm_optional_tool_install()
             elif key in (ord("f"), ord("F")) and page == PAGE_SYSTEM:
                 firmware_info = firmware_inventory_info()
@@ -6491,9 +6554,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             tree.get_selection().set_mode(Gtk.SelectionMode.SINGLE)
             list_scroll = Gtk.ScrolledWindow()
             list_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            list_scroll.set_min_content_height(330)
+            list_scroll.set_min_content_height(300)
             list_scroll.add(tree)
-            self.content.pack_start(list_scroll, True, True, 0)
+            self.content.pack_start(list_scroll, False, False, 0)
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             open_button = Gtk.Button(label="Abrir aplicativo selecionado")
             open_button.get_style_context().add_class("action")
@@ -6508,6 +6571,118 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             actions.pack_start(open_button, True, True, 0)
             actions.pack_start(remove_button, False, False, 0)
             self.content.pack_start(actions, False, False, 0)
+            self.render_steam_library_section()
+
+        def render_steam_library_section(self) -> None:
+            steam = self.manager_data.get("steam", {})
+            games = steam.get("games", [])
+            library = self.card("Biblioteca de jogos Steam")
+            self.add_row(library, "Estado", steam.get("message", "Biblioteca não consultada."))
+            self.add_row(library, "Cliente", steam.get("steam_client", "Não detectado"))
+            self.add_row(library, "Fonte", steam.get("source", "manifestos locais do Steam"))
+            self.add_row(library, "Bibliotecas", str(steam.get("library_count", 0)))
+            if games:
+                store = Gtk.ListStore(str, str)
+                for game in games:
+                    store.append([game["name"], game["app_id"]])
+                tree = Gtk.TreeView(model=store)
+                tree.set_headers_visible(True)
+                self.add_tree_column(tree, "Jogo instalado", 0, True)
+                self.add_tree_column(tree, "App ID", 1, False)
+                selection = tree.get_selection()
+                selection.set_mode(Gtk.SelectionMode.SINGLE)
+                list_scroll = Gtk.ScrolledWindow()
+                list_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+                list_scroll.set_size_request(-1, 230)
+                list_scroll.add(tree)
+                library.pack_start(list_scroll, False, False, 0)
+                launch_button = Gtk.Button(label="Abrir jogo selecionado no Steam")
+                launch_button.get_style_context().add_class("action")
+                launch_button.set_sensitive(False)
+                selection.connect("changed", self.on_steam_game_selection, launch_button)
+                launch_button.connect("clicked", self.launch_selected_steam_game, selection)
+                library.pack_start(launch_button, False, False, 0)
+            else:
+                hint = Gtk.Label(
+                    label=(
+                        "O BooM lê apenas manifestos de bibliotecas Steam locais. Ele não acessa sua conta, "
+                        "não baixa jogos e não executa comandos de instalação."
+                    )
+                )
+                hint.set_xalign(0)
+                hint.set_line_wrap(True)
+                hint.get_style_context().add_class("muted")
+                library.pack_start(hint, False, False, 0)
+            self.add_card(library)
+
+            tools = {item["name"]: item["installed"] for item in gaming_tool_status()}
+            options = self.card("FPS no jogo e perfil de desempenho")
+            self.add_row(
+                options, "MangoHud",
+                "Instalado" if tools.get("MangoHud") else "Ausente · disponível como ferramenta opcional",
+            )
+            self.add_row(
+                options, "GameMode",
+                "Instalado" if tools.get("GameMode") else "Ausente · disponível como ferramenta opcional",
+            )
+            hint = Gtk.Label(
+                label=(
+                    "Copie uma opção para Propriedades > Geral > Opções de inicialização do jogo no Steam. "
+                    "MangoHud mede FPS compatíveis e desenha o overlay no jogo; GameMode pede o perfil ao daemon. "
+                    "No Steam Flatpak, MangoHud precisa da camada/runtime dentro do sandbox; o pacote APT é para Steam nativo. "
+                    "O BooM não altera opções salvas nem estima FPS fora do jogo."
+                )
+            )
+            hint.set_xalign(0)
+            hint.set_line_wrap(True)
+            hint.get_style_context().add_class("muted")
+            options.pack_start(hint, False, False, 0)
+            for label, command in STEAM_LAUNCH_OPTIONS.items():
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                name = Gtk.Label(label=label)
+                name.set_xalign(0)
+                name.set_line_wrap(True)
+                name.set_max_width_chars(30)
+                name.get_style_context().add_class("body-copy")
+                entry = Gtk.Entry()
+                entry.set_text(command)
+                entry.set_editable(False)
+                entry.set_hexpand(True)
+                entry.get_accessible().set_name(f"Opção de inicialização: {label}")
+                copy_button = Gtk.Button(label="Copiar")
+                required_tools = {
+                    "MangoHud (FPS e métricas no jogo)": ("MangoHud",),
+                    "GameMode (perfil de desempenho durante o jogo)": ("GameMode",),
+                    "MangoHud + GameMode": ("MangoHud", "GameMode"),
+                }[label]
+                copy_button.set_sensitive(all(tools.get(tool, False) for tool in required_tools))
+                copy_button.connect("clicked", self.copy_steam_launch_option, command)
+                row.pack_start(name, False, False, 0)
+                row.pack_start(entry, True, True, 0)
+                row.pack_start(copy_button, False, False, 0)
+                options.pack_start(row, False, False, 0)
+            if not all(tools.values()):
+                install_button = Gtk.Button(label="Instalar ferramentas opcionais ausentes")
+                install_button.connect("clicked", self.request_optional_install)
+                options.pack_start(install_button, False, False, 0)
+            self.add_card(options)
+
+        def on_steam_game_selection(self, selection: Any, launch_button: Any) -> None:
+            _model, iterator = selection.get_selected()
+            launch_button.set_sensitive(iterator is not None)
+
+        def launch_selected_steam_game(self, _button: Any, selection: Any) -> None:
+            model, iterator = selection.get_selected()
+            if iterator is None:
+                return
+            name = model.get_value(iterator, 0)
+            result = launch_steam_game(model.get_value(iterator, 1))
+            self.refresh_state.set_text(f"{name}: {result['message']}")
+
+        def copy_steam_launch_option(self, _button: Any, command: str) -> None:
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            clipboard.set_text(command, -1)
+            self.refresh_state.set_text("Opção de inicialização copiada para a área de transferência.")
 
         def on_application_selection(self, selection: Any, open_button: Any, remove_button: Any) -> None:
             model, iterator = selection.get_selected()
