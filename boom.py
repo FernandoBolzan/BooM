@@ -35,6 +35,7 @@ from boom_performance import (
     analyze_performance_history,
 )
 from boom_disk_benchmark import (
+    DISK_BENCHMARK_RANDOM_JOB_SECONDS,
     DISK_BENCHMARK_SIZE_MIB,
     DISK_BENCHMARK_TIMEOUT_SECONDS,
     DiskBenchmarkSession,
@@ -3857,10 +3858,15 @@ def run_tui() -> None:
                 return
             target = str(readiness["target"])
             source = readiness.get("source") or readiness.get("mountpoint") or "volume selecionado"
-            confirmation = (
-                f"{source}: escrever e ler {DISK_BENCHMARK_SIZE_MIB} MiB sequenciais em arquivo temporário em {target}; "
-                f"máximo de {DISK_BENCHMARK_TIMEOUT_SECONDS} s, sem tocar dados existentes. Iniciar? [s/N] "
+            curses_text(stdscr, height - 4, 2, f"Volume: {source} · pasta: {target}", width=width - 4)
+            curses_text(
+                stdscr,
+                height - 3,
+                2,
+                f"fio: {DISK_BENCHMARK_SIZE_MIB} MiB temporários · sequencial + 4K aleatório QD1/QD32 · 4 perfis × {DISK_BENCHMARK_RANDOM_JOB_SECONDS} s · sem watchdog térmico",
+                width=width - 4,
             )
+            confirmation = f"Máximo {DISK_BENCHMARK_TIMEOUT_SECONDS} s; iniciar? [s/N] "
             curses_text(stdscr, height - 2, 2, confirmation, width=width - 4, attr=curses.color_pair(4))
             stdscr.refresh()
             if stdscr.getch() not in (ord("s"), ord("S")):
@@ -4284,7 +4290,7 @@ def run_tui() -> None:
                     f"Temperatura GPU: {gpu_temp:.1f} °C" if isinstance(gpu_temp, (int, float)) else "Temperatura GPU: indisponível",
                     f"Sensor mais quente: {all_temp:.1f} °C · início abaixo de {STRESS_TEST_PRECHECK_TEMP_C:.0f} °C · parada em {STRESS_TEST_ABORT_TEMP_C:.0f} °C" if isinstance(all_temp, (int, float)) else "Sensor mais quente: indisponível",
                     f"RAM para teste: {format_bytes(allocation)} · um worker · no máximo 25% da RAM disponível",
-                    f"Benchmark de disco: fio · arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB · leitura/escrita sequencial direta · máximo de {DISK_BENCHMARK_TIMEOUT_SECONDS} s",
+                    f"Benchmark de disco: fio · arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB · sequencial + aleatório 4 KiB QD1/QD32 · máximo de {DISK_BENCHMARK_TIMEOUT_SECONDS} s",
                     "O benchmark só grava em arquivo novo na pasta escolhida; o arquivo é removido ao terminar.",
                     "O benchmark de disco ainda não tem parada automática por temperatura.",
                     "Benchmark CPU/RAM: " + ("sysbench instalado" if sysbench_executable else "sysbench ausente · use I para instalar ferramentas opcionais"),
@@ -4302,8 +4308,6 @@ def run_tui() -> None:
                 for line in test_rows:
                     curses_text(stdscr, y, 2, line, width=width - 4); y += 1
                 if session.get("summary"):
-                    for line in str(session["summary"]).splitlines():
-                        curses_text(stdscr, y, 2, line, width=width - 4); y += 1
                     curses_text(stdscr, y + 1, 2, "Resumo do teste:", attr=curses.color_pair(2) | curses.A_BOLD); y += 2
                     for line in session["summary"].splitlines()[-max(1, height - y - 4):]:
                         curses_text(stdscr, y, 2, line, width=width - 4); y += 1
@@ -5942,7 +5946,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             self.add_row(
                 benchmarks,
                 "Disco",
-                f"fio · {DISK_BENCHMARK_SIZE_MIB} MiB sequenciais · arquivo temporário novo na pasta escolhida, removido ao terminar",
+                f"fio · sequencial + aleatório 4 KiB QD1/QD32 · {DISK_BENCHMARK_SIZE_MIB} MiB temporários · arquivo removido ao terminar",
             )
             benchmark_actions = Gtk.Grid()
             benchmark_actions.set_column_spacing(12)
@@ -5965,11 +5969,11 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             memory_benchmark_button.connect("clicked", self.request_sysbench_benchmark, "memory-benchmark")
             benchmark_actions.attach(memory_benchmark_button, 1, 0, 1, 1)
             fio_installed = bool(shutil.which("fio"))
-            disk_button = Gtk.Button(label="Benchmark disco" if fio_installed else "Instalar fio")
+            disk_button = Gtk.Button(label="Benchmark disco completo" if fio_installed else "Instalar fio")
             disk_button.get_style_context().add_class("action")
             disk_button.set_sensitive(not busy)
             disk_button.set_tooltip_text(
-                f"Escolha uma pasta no volume; grava e lê apenas um arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB."
+                f"Escolha uma pasta; sequencial e aleatório 4 KiB QD1/QD32 em um arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB. Quatro perfis aleatórios duram {DISK_BENCHMARK_RANDOM_JOB_SECONDS} s cada; sem watchdog térmico do disco."
                 if fio_installed else "fio está ausente; a instalação assistida revisará os pacotes ausentes e pedirá confirmação."
             )
             disk_button.connect("clicked", self.request_disk_benchmark)
@@ -6236,10 +6240,10 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 flags=Gtk.DialogFlags.MODAL,
                 message_type=Gtk.MessageType.WARNING,
                 buttons=Gtk.ButtonsType.CANCEL,
-                text="Executar benchmark sequencial de disco?",
+                text="Executar benchmark sequencial e aleatório de disco?",
             )
             dialog.format_secondary_text(
-                f"Volume: {mount_source}. Pasta: {resolved_target}. O fio gravará e lerá {DISK_BENCHMARK_SIZE_MIB} MiB em arquivo novo, com I/O direto, por até {DISK_BENCHMARK_TIMEOUT_SECONDS} s. O arquivo será removido ao terminar ou cancelar; nenhum dispositivo bruto nem arquivo existente será alterado."
+                f"Volume: {mount_source}. Pasta: {resolved_target}. O fio usará um único arquivo temporário novo de {DISK_BENCHMARK_SIZE_MIB} MiB para leitura e escrita sequenciais de 1 MiB e quatro perfis aleatórios 4 KiB (leitura/escrita em QD1/QD32, {DISK_BENCHMARK_RANDOM_JOB_SECONDS} s cada). O limite total é {DISK_BENCHMARK_TIMEOUT_SECONDS} s; este fluxo não monitora temperatura do disco. O arquivo será removido ao terminar ou cancelar; nenhum dispositivo bruto nem arquivo existente será alterado."
             )
             dialog.add_button("Iniciar benchmark", Gtk.ResponseType.ACCEPT)
             response = dialog.run()

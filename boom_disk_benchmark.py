@@ -19,24 +19,71 @@ DISK_BENCHMARK_SIZE_BYTES = 128 * 1024**2
 DISK_BENCHMARK_SIZE_MIB = DISK_BENCHMARK_SIZE_BYTES // 1024**2
 DISK_BENCHMARK_REQUIRED_FREE_BYTES = DISK_BENCHMARK_SIZE_BYTES + 32 * 1024**2
 DISK_BENCHMARK_TIMEOUT_SECONDS = 120
+DISK_BENCHMARK_RANDOM_JOB_SECONDS = 5
 DISK_BENCHMARK_TEMP_PREFIX = ".boom-disk-benchmark-"
-DISK_BENCHMARK_JOB = """[global]
-ioengine=psync
+DISK_BENCHMARK_JOB = f"""[global]
 direct=1
-bs=1M
 size=128M
-iodepth=1
-numjobs=1
 end_fsync=1
 filename=payload.bin
 
 [boom-sequential-write]
+ioengine=psync
+bs=1M
+iodepth=1
 rw=write
 
 [boom-sequential-read]
 stonewall
+ioengine=psync
+bs=1M
+iodepth=1
 rw=read
+
+[boom-random-read-qd1]
+stonewall
+ioengine=libaio
+bs=4k
+iodepth=1
+time_based=1
+runtime={DISK_BENCHMARK_RANDOM_JOB_SECONDS}
+rw=randread
+
+[boom-random-read-qd32]
+stonewall
+ioengine=libaio
+bs=4k
+iodepth=32
+time_based=1
+runtime={DISK_BENCHMARK_RANDOM_JOB_SECONDS}
+rw=randread
+
+[boom-random-write-qd1]
+stonewall
+ioengine=libaio
+bs=4k
+iodepth=1
+time_based=1
+runtime={DISK_BENCHMARK_RANDOM_JOB_SECONDS}
+rw=randwrite
+
+[boom-random-write-qd32]
+stonewall
+ioengine=libaio
+bs=4k
+iodepth=32
+time_based=1
+runtime={DISK_BENCHMARK_RANDOM_JOB_SECONDS}
+rw=randwrite
 """
+_FIO_PROFILES = {
+    "boom-sequential-write": {"direction": "write", "label": "Sequencial · escrita 1 MiB"},
+    "boom-sequential-read": {"direction": "read", "label": "Sequencial · leitura 1 MiB"},
+    "boom-random-read-qd1": {"direction": "read", "label": "Aleatória 4 KiB · leitura · QD1"},
+    "boom-random-read-qd32": {"direction": "read", "label": "Aleatória 4 KiB · leitura · QD32"},
+    "boom-random-write-qd1": {"direction": "write", "label": "Aleatória 4 KiB · escrita · QD1"},
+    "boom-random-write-qd32": {"direction": "write", "label": "Aleatória 4 KiB · escrita · QD32"},
+}
 _NON_STORAGE_FILESYSTEMS = {"cgroup", "cgroup2", "devpts", "devtmpfs", "proc", "ramfs", "sysfs", "tmpfs"}
 
 
@@ -191,36 +238,42 @@ def parse_fio_json(payload: str | bytes) -> dict[str, Any]:
     jobs = document.get("jobs") if isinstance(document, dict) else None
     if not isinstance(jobs, list):
         raise ValueError("A saída do fio não contém os trabalhos de leitura e escrita.")
-    result: dict[str, Any] = {"size_bytes": DISK_BENCHMARK_SIZE_BYTES, "mode": "I/O sequencial direto"}
+    results: dict[str, dict[str, Any]] = {}
     for job in jobs:
         if not isinstance(job, dict):
             continue
         name = str(job.get("jobname", "")).casefold()
-        if "write" in name:
-            direction = "write"
-        elif "read" in name:
-            direction = "read"
-        else:
+        profile = _FIO_PROFILES.get(name)
+        if profile is None:
             continue
+        direction = profile["direction"]
         stats = _direction_stats(job, direction)
         if stats:
-            result[direction] = stats
-    if "write" not in result or "read" not in result:
-        raise ValueError("O fio não retornou métricas válidas para leitura e escrita sequenciais.")
-    return result
+            results[name] = {"name": name, "label": profile["label"], **stats}
+    if set(results) != set(_FIO_PROFILES):
+        raise ValueError("O fio não retornou métricas válidas para os seis perfis de leitura/escrita.")
+    return {
+        "size_bytes": DISK_BENCHMARK_SIZE_BYTES,
+        "mode": "I/O direto sequencial e aleatório 4 KiB",
+        "jobs": [results[name] for name in _FIO_PROFILES],
+    }
 
 
 def format_fio_summary(result: dict[str, Any]) -> str:
-    def direction(label: str, key: str) -> str:
-        stats = result[key]
-        speed = stats["bytes_per_second"] / 1024**2
-        iops = stats.get("iops")
-        iops_text = f" · {iops:.0f} IOPS" if isinstance(iops, (int, float)) else ""
-        latency = stats.get("latency_mean_ms")
-        latency_text = f" · latência média {latency:.2f} ms" if isinstance(latency, (int, float)) else ""
-        return f"{label} sequencial: {speed:.1f} MiB/s{iops_text}{latency_text}"
-
-    return direction("Escrita", "write") + " · " + direction("Leitura", "read")
+    lines = []
+    for job in result.get("jobs", []):
+        if not isinstance(job, dict):
+            continue
+        speed = job["bytes_per_second"] / 1024**2
+        iops = job.get("iops")
+        latency = job.get("latency_mean_ms")
+        metrics = [f"{iops:,.0f} IOPS" if isinstance(iops, (int, float)) else f"{speed:.1f} MiB/s"]
+        if isinstance(iops, (int, float)):
+            metrics.append(f"{speed:.1f} MiB/s")
+        if isinstance(latency, (int, float)):
+            metrics.append(f"latência média {latency:.2f} ms")
+        lines.append(f"{job['label']}: " + " · ".join(metrics))
+    return "\n".join(lines)
 
 
 def _signal_process(process: subprocess.Popen[Any], force: bool = False) -> None:
@@ -268,7 +321,7 @@ class DiskBenchmarkSession:
             elapsed = max(0.0, time.monotonic() - state["started_at"])
             state["elapsed_seconds"] = min(elapsed, DISK_BENCHMARK_TIMEOUT_SECONDS)
             state["remaining_seconds"] = max(0, int(DISK_BENCHMARK_TIMEOUT_SECONDS - elapsed + 0.999))
-            state["message"] = f"Benchmark sequencial em andamento · {state['remaining_seconds']} s restantes"
+            state["message"] = f"Benchmark sequencial/aleatório em andamento · {state['remaining_seconds']} s restantes"
         return state
 
     def is_active(self) -> bool:
@@ -373,7 +426,7 @@ class DiskBenchmarkSession:
             if isinstance(exc, RuntimeError):
                 raise
             raise RuntimeError(f"Não foi possível preparar o benchmark: {exc}") from exc
-        return f"Benchmark sequencial iniciado em {target}; arquivo temporário de 128 MiB, removido ao terminar."
+        return f"Benchmark sequencial/aleatório iniciado em {target}; arquivo temporário de 128 MiB, removido ao terminar."
 
     def _supervise(
         self,
@@ -440,10 +493,10 @@ class DiskBenchmarkSession:
                 message = reason
             elif result is not None:
                 status = "completed"
-                message = "Benchmark sequencial concluído; o arquivo temporário foi removido."
+                message = "Benchmark de disco concluído; o arquivo temporário foi removido."
             else:
                 status = "failed"
-                message = "O fio terminou sem um resultado de leitura/escrita válido."
+                message = "O fio terminou sem métricas válidas para todos os perfis de disco."
             self._state.update({
                 "status": status,
                 "message": message,

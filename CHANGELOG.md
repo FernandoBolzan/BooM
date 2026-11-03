@@ -5,6 +5,10 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ## [Unreleased]
 
+### Adicionado
+
+- **Testes** amplia o benchmark de disco com sequencial de 1 MiB e aleatório 4 KiB: leitura/escrita em QD1/QD32, quatro perfis de 5 s, sempre no mesmo arquivo temporário privado de 128 MiB. Mantém confirmação, cancelamento, limite total de 120 s e limpeza; não acessa dispositivos brutos.
+
 ## [0.2.2] - 2026-11-03
 
 ### Adicionado

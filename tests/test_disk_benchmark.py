@@ -15,13 +15,21 @@ def mount_entry(mountpoint: str, filesystem: str = "ext4", source: str = "/dev/t
 
 
 class DiskBenchmarkTests(unittest.TestCase):
-    def test_job_file_is_bounded_sequential_direct_file_io(self):
+    def test_job_file_bounds_sequential_and_random_io_to_one_private_file(self):
         self.assertIn("direct=1", disk.DISK_BENCHMARK_JOB)
         self.assertIn("size=128M", disk.DISK_BENCHMARK_JOB)
         self.assertIn("end_fsync=1", disk.DISK_BENCHMARK_JOB)
         self.assertIn("rw=write", disk.DISK_BENCHMARK_JOB)
         self.assertIn("rw=read", disk.DISK_BENCHMARK_JOB)
+        self.assertIn("rw=randread", disk.DISK_BENCHMARK_JOB)
+        self.assertIn("rw=randwrite", disk.DISK_BENCHMARK_JOB)
         self.assertIn("filename=payload.bin", disk.DISK_BENCHMARK_JOB)
+        self.assertEqual(disk.DISK_BENCHMARK_JOB.count("[boom-"), 6)
+        self.assertEqual(disk.DISK_BENCHMARK_JOB.count("stonewall"), 5)
+        self.assertEqual(disk.DISK_BENCHMARK_JOB.count("runtime=5"), 4)
+        self.assertEqual(disk.DISK_BENCHMARK_JOB.count("bs=4k"), 4)
+        self.assertIn("iodepth=32", disk.DISK_BENCHMARK_JOB)
+        self.assertIn("ioengine=libaio", disk.DISK_BENCHMARK_JOB)
         self.assertNotIn("/dev/", disk.DISK_BENCHMARK_JOB)
 
     def test_command_passes_only_a_booM_job_file_to_fio(self):
@@ -44,24 +52,44 @@ class DiskBenchmarkTests(unittest.TestCase):
                 disk.build_fio_command("/usr/bin/fio", regular)
 
     def test_parser_reads_separate_write_and_read_metrics(self):
+        directions = {
+            "boom-sequential-write": ("write", 52_428_800, 50),
+            "boom-sequential-read": ("read", 51_200, 50),
+            "boom-random-read-qd1": ("read", 409_600, 100),
+            "boom-random-read-qd32": ("read", 819_200, 200),
+            "boom-random-write-qd1": ("write", 204_800, 50),
+            "boom-random-write-qd32": ("write", 614_400, 150),
+        }
         payload = json.dumps({
             "jobs": [
-                {"jobname": "boom-sequential-write", "write": {"bw_bytes": 52_428_800, "iops": 50, "clat_ns": {"mean": 2_000_000}}},
-                {"jobname": "boom-sequential-read", "read": {"bw": 51_200, "iops": 50, "lat_ns": {"mean": 1_000_000}}},
+                {
+                    "jobname": name,
+                    direction: {
+                        "bw_bytes": byte_rate,
+                        "iops": iops,
+                        "clat_ns": {"mean": 2_000_000},
+                    },
+                }
+                for name, (direction, byte_rate, iops) in directions.items()
             ]
         })
         result = disk.parse_fio_json(payload)
-        self.assertEqual(result["write"]["bytes_per_second"], 52_428_800)
-        self.assertEqual(result["read"]["bytes_per_second"], 51_200 * 1024)
-        self.assertEqual(result["write"]["latency_mean_ms"], 2.0)
-        self.assertIn("Escrita sequencial", disk.format_fio_summary(result))
-        self.assertIn("Leitura sequencial", disk.format_fio_summary(result))
-        self.assertIn("50 IOPS", disk.format_fio_summary(result))
+        parsed = {item["name"]: item for item in result["jobs"]}
+        self.assertEqual(len(parsed), 6)
+        self.assertEqual(parsed["boom-sequential-write"]["bytes_per_second"], 52_428_800)
+        self.assertEqual(parsed["boom-sequential-read"]["bytes_per_second"], 51_200)
+        self.assertEqual(parsed["boom-random-write-qd32"]["iops"], 150)
+        self.assertEqual(parsed["boom-sequential-write"]["latency_mean_ms"], 2.0)
+        summary = disk.format_fio_summary(result)
+        self.assertIn("Sequencial · escrita 1 MiB", summary)
+        self.assertIn("Aleatória 4 KiB · leitura · QD1", summary)
+        self.assertIn("Aleatória 4 KiB · escrita · QD32", summary)
+        self.assertIn("200 IOPS", summary)
 
     def test_parser_rejects_invalid_or_incomplete_fio_output(self):
         with self.assertRaises(ValueError):
             disk.parse_fio_json("not json")
-        with self.assertRaisesRegex(ValueError, "leitura e escrita"):
+        with self.assertRaisesRegex(ValueError, "seis perfis"):
             disk.parse_fio_json('{"jobs": []}')
 
     def test_readiness_requires_fio_and_existing_writable_persistent_target(self):
