@@ -84,6 +84,26 @@ NAVIGATION_DESCRIPTIONS = (
     "Programas configurados para iniciar junto com sua sessão.",
     "Testes controlados de CPU, RAM, GPU e armazenamento com cancelamento.",
 )
+NAVIGATION_GROUPS = (
+    ("Monitorar", (PAGE_OVERVIEW, PAGE_SYSTEM, PAGE_MEMORY, PAGE_GRAPHICS, PAGE_DISKS, PAGE_NETWORK)),
+    ("Gerenciar", (PAGE_PROCESSES, PAGE_APPLICATIONS, PAGE_STARTUP)),
+    ("Diagnosticar", (PAGE_TESTS,)),
+)
+NAVIGATION_GROUP_BY_PAGE = {
+    page: title for title, pages in NAVIGATION_GROUPS for page in pages
+}
+NAVIGATION_ICONS = (
+    "view-grid-symbolic",
+    "computer-symbolic",
+    "drive-harddisk-symbolic",
+    "video-display-symbolic",
+    "drive-harddisk-symbolic",
+    "network-wired-symbolic",
+    "system-run-symbolic",
+    "application-x-executable-symbolic",
+    "system-run-symbolic",
+    "utilities-system-monitor-symbolic",
+)
 STRESS_TEST_DURATIONS = (10, 30, 60, 120)
 STRESS_TEST_PRECHECK_TEMP_C = 80.0
 STRESS_TEST_ABORT_TEMP_C = 85.0
@@ -110,31 +130,65 @@ POWER_PROFILE_LABELS = {
 _PERFORMANCE_HISTORY = PerformanceHistoryStore()
 _DISK_IO_SAMPLER = DiskIoSampler()
 GTK_CSS = b"""
-* { font-family: system-ui, 'Ubuntu', sans-serif; }
-window, .boom-root { background: #0b0d11; color: #f3f5f7; }
-.sidebar { background: #101319; border-right: 1px solid #292f3a; }
-.brand { color: #b9f66a; font-size: 27px; font-weight: 800; letter-spacing: 1px; }
-.eyebrow { color: #929aa8; font-size: 10px; font-weight: 700; letter-spacing: 1.3px; }
-.nav-button { background: transparent; color: #aeb5c0; border: 0; border-radius: 8px; padding: 11px 13px; }
-.nav-button:hover, .nav-button.selected { background: #1b2029; color: #f3f5f7; }
-.nav-button.selected { box-shadow: inset 3px 0 #b9f66a; }
-.title { color: #f3f5f7; font-size: 25px; font-weight: 700; }
-.subtitle { color: #929aa8; font-size: 12px; }
-.card { background: #141820; border: 1px solid #292f3a; border-radius: 12px; padding: 18px; }
-.card-title { color: #aeb5c0; font-size: 11px; font-weight: 700; letter-spacing: .8px; }
-.metric { color: #f3f5f7; font-size: 25px; font-weight: 700; }
-.body-copy { color: #e2e5ea; font-size: 13px; }
-.muted { color: #929aa8; font-size: 12px; }
-.accent { color: #b9f66a; }
-treeview { background: #101319; color: #e2e5ea; }
-treeview:selected { background: #28331d; color: #f3f5f7; }
-treeview header button { background: #1b2029; color: #aeb5c0; border-color: #292f3a; }
-entry { background: #101319; color: #f3f5f7; border: 1px solid #292f3a; border-radius: 8px; padding: 8px; }
-button.action { background: #b9f66a; color: #101319; border: 0; border-radius: 8px; padding: 9px 14px; font-weight: 700; }
-button.action:hover { background: #c9ff7c; }
-progressbar trough { background: #292f3a; border-radius: 5px; min-height: 8px; }
-progressbar progress { background: #b9f66a; border-radius: 5px; }
-scrollbar slider { background: #3b424e; }
+.boom-root { font-family: 'Fira Sans', 'Ubuntu', sans-serif; background-color: #f1f5f1; color: #17271d; }
+.boom-root .sidebar { background-image: linear-gradient(180deg, #193526 0%, #10251a 48%, #0d1b14 100%); border: 1px solid #294734; border-radius: 18px; box-shadow: 0 8px 24px rgba(12, 30, 18, .10); }
+.boom-root .brand-mark { background-color: #c5f36e; color: #18351f; border-radius: 12px; font-size: 25px; font-weight: 800; min-width: 42px; min-height: 42px; }
+.boom-root .brand { color: #f4fbf3; font-size: 24px; font-weight: 800; letter-spacing: -.4px; }
+.boom-root .eyebrow { color: #9ebba7; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+.boom-root .sidebar .muted { color: #9db5a3; }
+.boom-root .sidebar .local-status { color: #c5f36e; }
+.boom-root .nav-section { color: #84a08c; font-size: 10px; font-weight: 700; letter-spacing: 1px; margin-top: 18px; margin-bottom: 5px; }
+.boom-root .nav-button { background-color: transparent; color: #c8d8cc; border: 1px solid transparent; border-radius: 11px; min-height: 44px; padding: 9px 14px; }
+.boom-root .nav-button:hover { background-color: #244333; color: #ffffff; }
+.boom-root .nav-button image { color: #9db6a4; }
+.boom-root .nav-button.selected { background-color: #c5f36e; color: #17351e; border-color: #d3ff8c; box-shadow: 0 3px 10px rgba(4, 12, 6, .18); font-weight: 700; }
+.boom-root .nav-button.selected image { color: #17351e; }
+.boom-root .nav-button:focus { border-color: #f3ffde; box-shadow: 0 0 0 2px #a4d852; }
+.boom-root .sidebar-separator { background-color: #385744; min-height: 1px; margin-top: 17px; margin-bottom: 12px; }
+.boom-root .page-title { color: #14281b; font-size: 32px; font-weight: 700; }
+.boom-root .page-subtitle { color: #65796a; font-size: 13px; }
+.boom-root .page-overline { background-color: #e3f0db; color: #397047; border-radius: 20px; font-size: 10px; font-weight: 700; letter-spacing: .7px; padding: 4px 10px; }
+.boom-root .page-divider { background-color: #dfe8e0; color: #dfe8e0; min-height: 1px; }
+.boom-root .card { background-color: #ffffff; border: 1px solid #dce7dd; border-radius: 16px; padding: 26px; box-shadow: 0 3px 14px rgba(24, 53, 33, .07); }
+.boom-root .card:hover { border-color: #c6d9c9; box-shadow: 0 5px 18px rgba(24, 53, 33, .10); }
+.boom-root .card-title { color: #4c6252; font-size: 14px; font-weight: 600; }
+.boom-root .card-divider { background-color: transparent; min-height: 0; margin: 0; opacity: 0; }
+.boom-root .card.performance-cpu { background-image: linear-gradient(135deg, #ffffff 0%, #f6fbea 100%); border-top: 3px solid #a8dc58; }
+.boom-root .card.performance-gpu { background-image: linear-gradient(135deg, #ffffff 0%, #edf9f6 100%); border-top: 3px solid #55c5ad; }
+.boom-root .metric { color: #14281b; font-size: 36px; font-weight: 700; }
+.boom-root .body-copy { color: #23392b; font-size: 13px; }
+.boom-root .muted { color: #6b806f; font-size: 12px; }
+.boom-root .accent { color: #387442; }
+.boom-root .section-heading { border-left: 3px solid #a9d95f; margin-top: 8px; padding-left: 14px; }
+.boom-root .section-title { color: #1a3523; font-size: 19px; font-weight: 700; }
+.boom-root .section-detail { color: #718575; font-size: 12px; }
+.boom-root .detail-row { border-bottom: 1px solid #eef2ee; padding-top: 7px; padding-bottom: 7px; }
+.boom-root .content-grid { background-color: transparent; }
+.boom-root .content-grid > flowboxchild { background-color: transparent; border: 0; padding: 0; }
+.boom-root .action-flow { background-color: transparent; }
+.boom-root .action-flow > flowboxchild { background-color: transparent; border: 0; margin: 0; padding: 0; }
+.boom-root .footer { background-color: #fbfdfb; border-top: 1px solid #dce7dd; }
+.boom-root .local-status { color: #377146; font-size: 10px; font-weight: 700; letter-spacing: .8px; }
+.boom-root .metric-progress trough, .boom-root progressbar trough { background-color: #e7eee7; border-radius: 6px; min-height: 9px; }
+.boom-root .metric-progress progress, .boom-root progressbar progress { background-color: #8dcb43; border-radius: 6px; min-height: 9px; }
+.boom-root button { background-image: none; background-color: #ffffff; color: #294331; border: 1px solid #d3dfd5; border-radius: 10px; min-height: 40px; padding: 8px 13px; box-shadow: none; }
+.boom-root button:hover { background-color: #f0f6f0; border-color: #a8c0ac; color: #183522; }
+.boom-root button:active { background-color: #e4eee4; }
+.boom-root button:focus { border-color: #58a54d; box-shadow: 0 0 0 2px rgba(116, 181, 72, .25); }
+.boom-root button:disabled { color: #94a296; background-color: #f4f6f4; border-color: #e4e9e4; }
+.boom-root button.action { background-color: #1d5835; color: #ffffff; border-color: #1d5835; font-weight: 700; }
+.boom-root button.action:hover { background-color: #267346; border-color: #267346; color: #ffffff; }
+.boom-root button.action:focus { border-color: #ffffff; box-shadow: 0 0 0 2px #76b84b; }
+.boom-root button.destructive { color: #a6383d; border-color: #e2bfc0; }
+.boom-root button.destructive:hover { background-color: #fff1f0; border-color: #ce8b8d; }
+.boom-root entry, .boom-root searchentry, .boom-root combobox button { background-color: #ffffff; color: #203729; border: 1px solid #d3dfd5; border-radius: 10px; min-height: 38px; padding: 5px 10px; }
+.boom-root entry:focus, .boom-root searchentry:focus, .boom-root combobox button:focus { border-color: #58a54d; box-shadow: 0 0 0 2px rgba(116, 181, 72, .2); }
+.boom-root treeview.view { background-color: #ffffff; color: #263b2d; }
+.boom-root treeview.view:selected { background-color: #e1f4d3; color: #183522; }
+.boom-root treeview header button { background-color: #f2f6f2; color: #526b57; border-color: #dce7dd; border-radius: 0; }
+.boom-root treeview.view row { min-height: 38px; }
+.boom-root scrollbar slider { background-color: #bdcbbf; border-radius: 8px; min-width: 8px; min-height: 8px; }
+.boom-root scrollbar slider:hover { background-color: #8fa791; }
 """
 
 
@@ -2281,6 +2335,7 @@ def parse_proc_stat(text: str) -> dict[str, Any] | None:
             "pid": pid,
             "comm": name,
             "state_code": fields[0],
+            "ppid": int(fields[1]),
             "utime": int(fields[11]),
             "stime": int(fields[12]),
             "start_ticks": int(fields[19]),
@@ -2319,6 +2374,119 @@ def read_process_record(pid: int) -> dict[str, Any] | None:
     return stat
 
 
+def process_records_snapshot() -> list[dict[str, Any]]:
+    records = []
+    try:
+        proc_paths = Path("/proc").iterdir()
+    except OSError:
+        return records
+    for path in proc_paths:
+        if path.name.isdigit():
+            record = read_process_record(int(path.name))
+            if record is not None:
+                records.append(record)
+    return records
+
+
+def process_tree_snapshot(
+    root_pid: int,
+    expected_start_ticks: int,
+    process_records: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    records = process_records if process_records is not None else process_records_snapshot()
+    by_pid = {record["pid"]: record for record in records}
+    root = by_pid.get(root_pid)
+    if root is None or root["start_ticks"] != expected_start_ticks:
+        raise ProcessLookupError("O processo selecionado já encerrou ou o PID foi reutilizado.")
+
+    children: dict[int, list[dict[str, Any]]] = {}
+    for record in records:
+        parent_pid = record.get("ppid")
+        if isinstance(parent_pid, int) and parent_pid in by_pid:
+            children.setdefault(parent_pid, []).append(record)
+    for siblings in children.values():
+        siblings.sort(key=lambda item: item["pid"])
+
+    snapshot = []
+    seen = {root_pid}
+    pending = [(root, 0)]
+    while pending:
+        record, depth = pending.pop()
+        captured = dict(record)
+        captured["tree_depth"] = depth
+        snapshot.append(captured)
+        for child in reversed(children.get(record["pid"], [])):
+            child_pid = child["pid"]
+            if child_pid in seen:
+                continue
+            seen.add(child_pid)
+            pending.append((child, depth + 1))
+    return snapshot
+
+
+def terminate_process_tree(
+    root_pid: int,
+    expected_start_ticks: int,
+    process_records: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    snapshot = process_tree_snapshot(root_pid, expected_start_ticks, process_records)
+    root = next(record for record in snapshot if record["pid"] == root_pid)
+    if not root["can_terminate"]:
+        raise PermissionError("O processo selecionado está protegido ou pertence a outro usuário.")
+
+    protected = [record for record in snapshot if not record["can_terminate"]]
+    if protected:
+        examples = ", ".join(
+            f"{record['name']} (PID {record['pid']})" for record in protected[:3]
+        )
+        remainder = len(protected) - min(3, len(protected))
+        suffix = f" e mais {remainder}" if remainder else ""
+        raise PermissionError(
+            f"A árvore inclui processos protegidos: {examples}{suffix}. Nenhum sinal foi enviado."
+        )
+
+    active = []
+    changed = []
+    newly_protected = []
+    for record in snapshot:
+        current = read_process_record(record["pid"])
+        if current is None or current["start_ticks"] != record["start_ticks"]:
+            changed.append(record)
+        elif not current["can_terminate"]:
+            newly_protected.append(current)
+        else:
+            active.append(record)
+    if newly_protected:
+        examples = ", ".join(
+            f"{record['name']} (PID {record['pid']})" for record in newly_protected[:3]
+        )
+        raise PermissionError(
+            f"A árvore mudou e inclui processos protegidos: {examples}. Nenhum sinal foi enviado."
+        )
+    if not any(record["pid"] == root_pid for record in active):
+        raise ProcessLookupError("O processo selecionado encerrou antes da ação.")
+
+    sent = []
+    failed = []
+    for record in sorted(
+        active,
+        key=lambda item: (-item["tree_depth"], -item["pid"]),
+    ):
+        try:
+            terminate_process(record["pid"], record["start_ticks"])
+            sent.append(record)
+        except ProcessLookupError:
+            changed.append(record)
+        except OSError as exc:
+            failed.append({"process": record, "error": str(exc)})
+    return {
+        "total": len(snapshot),
+        "sent": sent,
+        "changed": changed,
+        "failed": failed,
+    }
+
+
 def _system_cpu_ticks() -> int | None:
     text = read_text("/proc/stat")
     if not text:
@@ -2334,11 +2502,8 @@ def _system_cpu_ticks() -> int | None:
 
 def process_list(sample_seconds: float = 0.12) -> list[dict[str, Any]]:
     before = {}
-    for path in Path("/proc").glob("[0-9]*"):
-        if path.name.isdigit():
-            record = read_process_record(int(path.name))
-            if record is not None:
-                before[record["pid"]] = record
+    for record in process_records_snapshot():
+        before[record["pid"]] = record
     ticks_before = _system_cpu_ticks()
     started = time.monotonic()
     time.sleep(max(0.0, sample_seconds))
@@ -2510,6 +2675,78 @@ def memory_module_terminal_rows(module: dict[str, str], index: int) -> list[str]
     return rows
 
 
+def flatpak_application_installations() -> dict[str, set[str]]:
+    flatpak = shutil.which("flatpak")
+    if not flatpak:
+        return {}
+    result = run_command([flatpak, "list", "--app", "--columns=application,installation"], timeout=10.0)
+    if result is None or result.returncode != 0:
+        return {}
+    installations: dict[str, set[str]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.split("\t") if "\t" in line else line.split()
+        if len(fields) < 2 or fields[-1] not in {"user", "system"}:
+            continue
+        app_id = fields[0].strip()
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", app_id):
+            installations.setdefault(app_id, set()).add(fields[-1])
+    return installations
+
+
+def dpkg_desktop_owners(paths: list[str]) -> dict[str, str]:
+    dpkg_query = shutil.which("dpkg-query")
+    if not dpkg_query or not paths:
+        return {}
+    result = run_command([dpkg_query, "--search", *paths], timeout=15.0)
+    if result is None:
+        return {}
+    owners: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        owner_text, separator, owned_path = line.partition(": ")
+        if not separator:
+            continue
+        packages = [part.strip() for part in owner_text.split(",")]
+        if len(packages) != 1 or owned_path not in paths:
+            continue
+        package = packages[0]
+        if re.fullmatch(r"[a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?", package):
+            owners[owned_path] = package
+    return owners
+
+
+def flatpak_installation_for_launcher(path: Path, installations: dict[str, set[str]]) -> tuple[str, str] | None:
+    app_id = path.name.removesuffix(".desktop")
+    scopes = installations.get(app_id, set())
+    if not scopes or path.suffix != ".desktop" or "flatpak/exports/share/applications" not in path.as_posix():
+        return None
+    home_exports = (Path.home() / ".local/share/flatpak/exports/share/applications").as_posix()
+    system_exports = "/var/lib/flatpak/exports/share/applications"
+    parent = path.parent.as_posix()
+    if parent == home_exports and "user" in scopes:
+        return app_id, "user"
+    if parent == system_exports and "system" in scopes:
+        return app_id, "system"
+    return None
+
+
+def desktop_application_uninstall_target(
+    path: str,
+    flatpak_installations: dict[str, set[str]],
+    dpkg_owners: dict[str, str],
+) -> dict[str, str] | None:
+    launcher = Path(path)
+    if launcher.suffix != ".desktop" or not launcher.is_file():
+        return None
+    flatpak = flatpak_installation_for_launcher(launcher, flatpak_installations)
+    if flatpak:
+        app_id, installation = flatpak
+        return {"manager": "flatpak", "app_id": app_id, "installation": installation}
+    package = dpkg_owners.get(path)
+    if package:
+        return {"manager": "apt", "package": package}
+    return None
+
+
 def desktop_application_list() -> list[dict[str, Any]]:
     home = Path.home()
     xdg_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")
@@ -2556,7 +2793,97 @@ def desktop_application_list() -> list[dict[str, Any]]:
                 "path": str(path),
                 "available": available,
             }
+    application_paths = [item["path"] for item in by_id.values()]
+    flatpak_installations = flatpak_application_installations()
+    dpkg_owners = dpkg_desktop_owners(application_paths)
+    for item in by_id.values():
+        target = desktop_application_uninstall_target(item["path"], flatpak_installations, dpkg_owners)
+        item["uninstall_target"] = target
+        item["uninstallable"] = target is not None
+        item["source"] = (
+            "Flatpak (" + target["installation"] + ")"
+            if target and target["manager"] == "flatpak"
+            else "APT"
+            if target
+            else "Origem não identificada"
+        )
     return sorted(by_id.values(), key=lambda item: item["name"].casefold())
+
+
+def preview_desktop_application_uninstall(target: dict[str, str]) -> dict[str, Any]:
+    if target.get("manager") == "flatpak":
+        app_id = target.get("app_id", "")
+        installation = target.get("installation", "")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", app_id) or installation not in {"user", "system"}:
+            return {"ok": False, "message": "Identificação Flatpak inválida."}
+        if not shutil.which("flatpak"):
+            return {"ok": False, "message": "O comando flatpak não está disponível."}
+        return {
+            "ok": True,
+            "message": f"Flatpak {app_id} ({installation}); removerá o aplicativo e os dados associados dele neste usuário.",
+        }
+    if target.get("manager") != "apt":
+        return {"ok": False, "message": "Origem do aplicativo não compatível com desinstalação."}
+    package = target.get("package", "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?", package):
+        return {"ok": False, "message": "Identificação do pacote APT inválida."}
+    apt_get = shutil.which("apt-get")
+    if not apt_get:
+        return {"ok": False, "message": "apt-get não está disponível nesta distribuição."}
+    result = run_command([apt_get, "--simulate", "purge", "--no-auto-remove", package], timeout=60.0)
+    if result is None or result.returncode != 0:
+        return {"ok": False, "message": "Não foi possível simular a remoção pelo APT."}
+    removal_lines = [
+        line for line in result.stdout.splitlines()
+        if re.match(r"^(?:Remv|Purg)\s+", line)
+    ]
+    removals = [line.split()[1] for line in removal_lines]
+    if len(removals) != 1 or removals[0].split(":", 1)[0] != package.split(":", 1)[0]:
+        extras = ", ".join(removals) or "nenhum pacote identificado"
+        return {
+            "ok": False,
+            "message": f"Remoção bloqueada: o APT também removeria ou não identificou pacotes com segurança ({extras}).",
+        }
+    return {
+        "ok": True,
+        "message": f"APT removerá e purgará somente {package}. Dependências compartilhadas não serão removidas.",
+    }
+
+
+def uninstall_desktop_application(target: dict[str, str]) -> dict[str, Any]:
+    preview = preview_desktop_application_uninstall(target)
+    if not preview["ok"]:
+        return preview
+    if target["manager"] == "apt":
+        apt_get = shutil.which("apt-get")
+        pkexec = shutil.which("pkexec")
+        if not apt_get or not pkexec:
+            return {"ok": False, "message": "APT e pkexec são necessários para remover o pacote com autorização do sistema."}
+        result = run_privileged_apt_step(
+            pkexec,
+            apt_get,
+            ["purge", "--yes", "--no-auto-remove", target["package"]],
+            "Desinstalação APT",
+        )
+        return {
+            "ok": result["ok"],
+            "message": "Pacote removido e configurações do sistema purgadas." if result["ok"] else result["message"],
+        }
+    flatpak = shutil.which("flatpak")
+    if not flatpak:
+        return {"ok": False, "message": "O comando flatpak não está disponível."}
+    option = "--user" if target["installation"] == "user" else "--system"
+    result = run_command(
+        [flatpak, "uninstall", option, "--delete-data", "--assumeyes", target["app_id"]],
+        timeout=600.0,
+    )
+    if result is None:
+        return {"ok": False, "message": "A desinstalação Flatpak não pôde ser iniciada ou excedeu o tempo limite."}
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()[-4:]
+        suffix = " · ".join(detail)
+        return {"ok": False, "message": f"Desinstalação Flatpak cancelada ou falhou{': ' + suffix if suffix else '.'}"}
+    return {"ok": True, "message": "Aplicativo Flatpak e dados associados removidos."}
 
 
 def launch_desktop_application(path: str) -> str:
@@ -3294,6 +3621,69 @@ def run_tui() -> None:
             except (OSError, ValueError) as exc:
                 status = f"Não foi possível encerrar: {exc}"
 
+        def confirm_terminate_tree() -> None:
+            nonlocal status
+            processes = manager.get("processes", [])
+            if not processes or selected >= len(processes):
+                status = "Nenhum processo selecionado."
+                return
+            process = processes[selected]
+            if not process["can_terminate"]:
+                status = "Este processo está protegido ou pertence a outro usuário."
+                return
+            try:
+                tree = process_tree_snapshot(
+                    process["pid"], process["start_ticks"], process_records=processes,
+                )
+            except (OSError, ValueError) as exc:
+                status = f"Não foi possível ler a árvore: {exc}"
+                return
+            if len(tree) <= 1:
+                status = "O processo selecionado não tem descendentes nesta captura."
+                return
+            protected = [item for item in tree if not item["can_terminate"]]
+            if protected:
+                examples = ", ".join(
+                    f"{item['name']} (PID {item['pid']})" for item in protected[:3]
+                )
+                status = f"A árvore contém processo(s) protegido(s): {examples}; nenhum sinal foi enviado."
+                return
+
+            descendants = len(tree) - 1
+            prompt = (
+                f"Encerrar árvore de {process['name']} (PID {process['pid']})? "
+                f"{len(tree)} processos no total, incluindo {descendants} descendentes. [s/N] "
+            )
+            curses_text(
+                stdscr, stdscr.getmaxyx()[0] - 2, 2, prompt,
+                width=stdscr.getmaxyx()[1] - 4, attr=curses.color_pair(4),
+            )
+            stdscr.refresh()
+            answer = stdscr.getch()
+            if answer not in (ord("s"), ord("S")):
+                status = "Encerramento da árvore cancelado."
+                return
+            try:
+                result = terminate_process_tree(
+                    process["pid"], process["start_ticks"], process_records=tree,
+                )
+                sent = len(result["sent"])
+                changed = len(result["changed"])
+                failures = result["failed"]
+                failed = len(failures)
+                failure_detail = ""
+                if failures:
+                    first = failures[0]
+                    target = first["process"]
+                    failure_detail = f" · falha em {target['name']} (PID {target['pid']})"
+                status = (
+                    f"SIGTERM enviado para {sent}/{result['total']} processos da árvore"
+                    f"; {changed} já encerrados ou alterados; {failed} falhas{failure_detail}."
+                )
+                refresh_manager()
+            except (OSError, ValueError) as exc:
+                status = f"Não foi possível encerrar a árvore: {exc}"
+
         def open_selected_app() -> None:
             nonlocal status
             applications = manager.get("applications", [])
@@ -3911,7 +4301,7 @@ def run_tui() -> None:
                     curses_text(stdscr, y, 2, "Pressione N para testar o gateway e 1.1.1.1.", attr=curses.color_pair(4)); y += 1
             elif page == PAGE_PROCESSES:
                 processes = manager.get("processes", [])
-                curses_text(stdscr, y, 2, "PID       CPU     RAM       ESTADO      PROCESSO", attr=curses.color_pair(2) | curses.A_BOLD); y += 1
+                curses_text(stdscr, y, 2, "PID       PPID      CPU     RAM       ESTADO      PROCESSO", attr=curses.color_pair(2) | curses.A_BOLD); y += 1
                 visible = max(1, height - 11)
                 first = max(0, min(selected - visible + 1, len(processes) - visible))
                 for index in range(first, min(len(processes), first + visible)):
@@ -3919,7 +4309,7 @@ def run_tui() -> None:
                     marker = ">" if index == selected else " "
                     cpu_value = f"{process['cpu_percent']:.1f}%" if process.get("cpu_percent") is not None else "—"
                     access = "encerrável" if process["can_terminate"] else "protegido"
-                    line = f"{marker} {process['pid']:<8} {cpu_value:<7} {format_bytes(process['memory_bytes']):<9} {process['state']:<10} {process['name']} · {access}"
+                    line = f"{marker} {process['pid']:<8} {process['ppid']:<8} {cpu_value:<7} {format_bytes(process['memory_bytes']):<9} {process['state']:<10} {process['name']} · {access}"
                     curses_text(stdscr, y, 2, line, width=width - 4, attr=curses.color_pair(3) if index == selected else 0); y += 1
                 if not processes:
                     curses_text(stdscr, y, 2, "Nenhum processo visível."); y += 1
@@ -3948,6 +4338,8 @@ def run_tui() -> None:
                 controls = "R atualizar · I instalar · F firmware · O IA local · M modelo · A explicar · P perfil · V restaurar · H histórico · D regras · Q sair"
             elif page == PAGE_TESTS:
                 controls = f"1-9/0 telas · R atualizar · I instalar · {test_action_legend()} · [/] GPU · X cancelar · Q sair"
+            elif page == PAGE_PROCESSES:
+                controls = "↑↓ navegar · K processo · T/t árvore · R atualizar · Q sair"
             else:
                 controls = "1-9/0 telas · R atualizar · ↑↓ navegar/rolar · Q sair"
             curses_text(stdscr, height - 1, 2, controls, width=width - 4)
@@ -3973,6 +4365,8 @@ def run_tui() -> None:
                 page_scroll[page] = max(0, page_scroll[page] - 1)
             elif key in (curses.KEY_DOWN, ord("j")) and page in page_scroll:
                 page_scroll[page] = min(page_max_scroll[page], page_scroll[page] + 1)
+            elif key in (ord("T"), ord("t")) and page == PAGE_PROCESSES:
+                confirm_terminate_tree()
             elif key in (curses.KEY_UP, ord("k"), ord("K")) and page in (PAGE_PROCESSES, PAGE_APPLICATIONS):
                 if key == ord("K") and page == PAGE_PROCESSES:
                     confirm_terminate()
@@ -4082,7 +4476,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
 
         def __init__(self) -> None:
             super().__init__(application=application, title="BooM")
-            self.set_default_size(1160, 760)
+            self.set_default_size(1440, 900)
+            self.set_size_request(1024, 680)
             self.set_border_width(0)
             self.connect("delete-event", self.on_close_request)
             provider = Gtk.CssProvider()
@@ -4099,6 +4494,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             self.live_metrics_busy = False
             self.stress_starting = False
             self.optional_installing = False
+            self.application_uninstalling = False
             self.ai_models: list[dict[str, Any]] = []
             self.ai_model: str | None = None
             self.ai_busy = False
@@ -4123,85 +4519,136 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
             root.get_style_context().add_class("boom-root")
             self.add(root)
-            sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            sidebar.set_size_request(220, -1)
-            sidebar.set_border_width(20)
+            sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            sidebar.set_size_request(226, -1)
+            sidebar.set_margin_start(24)
+            sidebar.set_margin_top(22)
+            sidebar.set_margin_bottom(22)
+            sidebar.set_margin_end(22)
             sidebar.get_style_context().add_class("sidebar")
             root.pack_start(sidebar, False, False, 0)
 
+            sidebar_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            sidebar_content.set_margin_start(12)
+            sidebar_content.set_margin_end(12)
+            sidebar.pack_start(sidebar_content, True, True, 0)
+
+            brand_lockup = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=11)
+            brand_mark = Gtk.Label(label="💣")
+            brand_mark.get_style_context().add_class("brand-mark")
+            brand_lockup.pack_start(brand_mark, False, False, 0)
+            brand_copy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             brand = Gtk.Label(label="BooM")
             brand.set_xalign(0)
             brand.get_style_context().add_class("brand")
-            sidebar.pack_start(brand, False, False, 0)
-            tagline = Gtk.Label(label="MONITOR DE SISTEMA")
+            brand_copy.pack_start(brand, False, False, 0)
+            tagline = Gtk.Label(label="MONITORAMENTO LINUX")
             tagline.set_xalign(0)
             tagline.get_style_context().add_class("eyebrow")
-            sidebar.pack_start(tagline, False, False, 0)
-            spacer = Gtk.Box()
-            spacer.set_size_request(-1, 26)
-            sidebar.pack_start(spacer, False, False, 0)
-
-            for index, title in enumerate(self.titles):
-                button = Gtk.Button(label=title)
-                button.set_relief(Gtk.ReliefStyle.NONE)
-                button.get_style_context().add_class("nav-button")
-                if index == PAGE_OVERVIEW:
-                    button.get_style_context().add_class("selected")
-                button.connect("clicked", self.on_navigation, index)
-                sidebar.pack_start(button, False, False, 0)
-                self.nav_buttons.append(button)
+            brand_copy.pack_start(tagline, False, False, 0)
+            brand_lockup.pack_start(brand_copy, False, False, 0)
+            sidebar_content.pack_start(brand_lockup, False, False, 12)
+            sidebar_rule = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            sidebar_rule.get_style_context().add_class("sidebar-separator")
+            sidebar_content.pack_start(sidebar_rule, False, False, 0)
+            self.nav_buttons = []
+            for group_title, page_indices in NAVIGATION_GROUPS:
+                group_label = Gtk.Label(label=group_title)
+                group_label.set_xalign(0)
+                group_label.get_style_context().add_class("nav-section")
+                sidebar_content.pack_start(group_label, False, False, 0)
+                for index in page_indices:
+                    button = Gtk.Button()
+                    button.set_relief(Gtk.ReliefStyle.NONE)
+                    button.set_halign(Gtk.Align.FILL)
+                    button.set_tooltip_text(self.descriptions[index])
+                    button.get_accessible().set_name(self.titles[index])
+                    button.get_style_context().add_class("nav-button")
+                    if index == PAGE_OVERVIEW:
+                        button.get_style_context().add_class("selected")
+                    button_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=11)
+                    icon = Gtk.Image.new_from_icon_name(NAVIGATION_ICONS[index], Gtk.IconSize.MENU)
+                    icon.set_pixel_size(18)
+                    button_content.pack_start(icon, False, False, 0)
+                    label = Gtk.Label(label=self.titles[index])
+                    label.set_xalign(0)
+                    button_content.pack_start(label, True, True, 0)
+                    button.add(button_content)
+                    button.connect("clicked", self.on_navigation, index)
+                    sidebar_content.pack_start(button, False, False, 0)
+                    self.nav_buttons.append(button)
 
             bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             bottom.set_valign(Gtk.Align.END)
             bottom.set_vexpand(True)
-            sidebar.pack_start(bottom, True, True, 0)
-            local = Gtk.Label(label="●  DADOS LOCAIS")
+            sidebar_content.pack_start(bottom, True, True, 0)
+            local = Gtk.Label(label="DADOS LOCAIS")
             local.set_xalign(0)
-            local.get_style_context().add_class("eyebrow")
+            local.get_style_context().add_class("local-status")
             bottom.pack_start(local, False, False, 0)
             host = Gtk.Label(label=socket.gethostname())
             host.set_xalign(0)
+            host.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
             host.get_style_context().add_class("muted")
             bottom.pack_start(host, False, False, 0)
 
             main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
             main.set_hexpand(True)
             root.pack_start(main, True, True, 0)
-            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            header.set_border_width(24)
-            header.set_margin_bottom(4)
+            header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+            header.set_margin_start(36)
+            header.set_margin_end(36)
+            header.set_margin_top(28)
+            header.set_margin_bottom(24)
+            header.get_style_context().add_class("page-header")
             main.pack_start(header, False, False, 0)
             heading_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             header.pack_start(heading_box, True, True, 0)
+            self.page_overline = Gtk.Label(label=NAVIGATION_GROUP_BY_PAGE[PAGE_OVERVIEW])
+            self.page_overline.set_xalign(0)
+            self.page_overline.set_halign(Gtk.Align.START)
+            self.page_overline.get_style_context().add_class("page-overline")
+            heading_box.pack_start(self.page_overline, False, False, 0)
             self.title_label = Gtk.Label(label=self.titles[0])
             self.title_label.set_xalign(0)
-            self.title_label.get_style_context().add_class("title")
+            self.title_label.set_line_wrap(True)
+            self.title_label.get_style_context().add_class("page-title")
             heading_box.pack_start(self.title_label, False, False, 0)
             self.description_label = Gtk.Label(label=self.descriptions[0])
             self.description_label.set_xalign(0)
-            self.description_label.get_style_context().add_class("subtitle")
+            self.description_label.set_line_wrap(True)
+            self.description_label.set_max_width_chars(86)
+            self.description_label.get_style_context().add_class("page-subtitle")
             heading_box.pack_start(self.description_label, False, False, 0)
+            header_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            header_actions.set_valign(Gtk.Align.CENTER)
             self.report_button = Gtk.Button(label="Exportar HTML")
             self.report_button.connect("clicked", self.export_report)
-            header.pack_end(self.report_button, False, False, 0)
+            header_actions.pack_start(self.report_button, False, False, 0)
             self.refresh_button = Gtk.Button(label="Atualizar")
             self.refresh_button.get_style_context().add_class("action")
             self.refresh_button.connect("clicked", self.refresh)
-            header.pack_end(self.refresh_button, False, False, 0)
+            header_actions.pack_start(self.refresh_button, False, False, 0)
+            header.pack_end(header_actions, False, False, 0)
 
             separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            separator.get_style_context().add_class("page-divider")
             main.pack_start(separator, False, False, 0)
             self.scroller = Gtk.ScrolledWindow()
             self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             main.pack_start(self.scroller, True, True, 0)
-            self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-            self.content.set_border_width(24)
+            self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=28)
+            self.content.set_border_width(40)
             self.scroller.add(self.content)
-            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            footer.set_border_width(15)
+            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            footer.set_border_width(14)
+            footer.get_style_context().add_class("footer")
+            self.refresh_state.set_ellipsize(Pango.EllipsizeMode.END)
+            self.refresh_state.set_max_width_chars(76)
             footer.pack_start(self.refresh_state, True, True, 0)
-            tray_note = "Bandeja e janela atualizam métricas a cada 5 s" if state["tray_available"] else "Sem bandeja · janela atualiza métricas a cada 5 s"
-            note = Gtk.Label(label=f"Dados locais · {tray_note}")
+            note = Gtk.Label(label="Dados locais · atualização a cada 5 s")
+            note.set_ellipsize(Pango.EllipsizeMode.END)
+            note.set_max_width_chars(36)
             note.get_style_context().add_class("muted")
             footer.pack_end(note, False, False, 0)
             main.pack_end(footer, False, False, 0)
@@ -4237,6 +4684,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     if other_index == index:
                         style.add_class("selected")
                 self.page = index
+                self.page_overline.set_text(NAVIGATION_GROUP_BY_PAGE[index])
                 self.title_label.set_text(self.titles[index])
                 self.description_label.set_text(self.descriptions[index])
                 if not self.render_scheduled:
@@ -4248,46 +4696,86 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
         def render_scheduled_page(self) -> bool:
             try:
                 self.render_page()
+                adjustment = self.scroller.get_vadjustment()
+                adjustment.set_value(adjustment.get_lower())
             finally:
                 self.render_scheduled = False
             return False
 
         def card(self, title: str) -> Any:
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=11)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
             box.get_style_context().add_class("card")
-            label = Gtk.Label(label=title.upper())
+            box.set_hexpand(True)
+            box.set_valign(Gtk.Align.START)
+            label = Gtk.Label(label=title)
             label.set_xalign(0)
+            label.set_line_wrap(True)
             label.get_style_context().add_class("card-title")
             box.pack_start(label, False, False, 0)
             return box
 
-        def metric(self, card: Any, value: str, detail: str = "") -> None:
+        def metric(
+            self,
+            card: Any,
+            value: str,
+            detail: str = "",
+            progress: float | None = None,
+        ) -> None:
             label = Gtk.Label(label=value)
             label.set_xalign(0)
-            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_line_wrap(True)
+            label.set_max_width_chars(54)
             label.get_style_context().add_class("metric")
             card.pack_start(label, False, False, 0)
             if detail:
                 hint = Gtk.Label(label=detail)
                 hint.set_xalign(0)
                 hint.set_line_wrap(True)
+                hint.set_max_width_chars(88)
                 hint.get_style_context().add_class("muted")
                 card.pack_start(hint, False, False, 0)
+            if progress is not None:
+                bar = Gtk.ProgressBar()
+                bar.set_fraction(max(0.0, min(1.0, progress / 100)))
+                bar.set_show_text(False)
+                bar.get_style_context().add_class("metric-progress")
+                card.pack_start(bar, False, False, 2)
 
         def add_row(self, card: Any, name: str, value: str) -> Any:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.get_style_context().add_class("detail-row")
             key = Gtk.Label(label=name)
             key.set_xalign(0)
+            key.set_line_wrap(True)
+            key.set_max_width_chars(34)
             key.get_style_context().add_class("muted")
             val = Gtk.Label(label=value)
             val.set_xalign(1)
-            val.set_ellipsize(Pango.EllipsizeMode.END)
+            val.set_line_wrap(True)
+            val.set_justify(Gtk.Justification.RIGHT)
+            val.set_max_width_chars(72)
             val.set_selectable(True)
             val.get_style_context().add_class("body-copy")
             row.pack_start(key, True, True, 0)
             row.pack_end(val, True, True, 0)
             card.pack_start(row, False, False, 0)
             return val
+
+        def add_section_heading(self, title: str, detail: str = "") -> Any:
+            heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            heading.get_style_context().add_class("section-heading")
+            label = Gtk.Label(label=title)
+            label.set_xalign(0)
+            label.get_style_context().add_class("section-title")
+            heading.pack_start(label, False, False, 0)
+            if detail:
+                description = Gtk.Label(label=detail)
+                description.set_xalign(0)
+                description.set_line_wrap(True)
+                description.get_style_context().add_class("section-detail")
+                heading.pack_start(description, False, False, 0)
+            self.content.pack_start(heading, False, False, 0)
+            return heading
 
         def add_card(self, card: Any) -> None:
             self.content.pack_start(card, False, False, 0)
@@ -4307,7 +4795,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             self.add_row(card, "Pausado", "Amostras existentes ficam até retomar ou apagar")
             self.add_row(card, "Privacidade", "Só métricas agregadas; não grava processos, rede ou identificadores")
 
-            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            actions = self.make_action_flow()
             toggle = Gtk.Button(label="Pausar histórico" if enabled else "Ativar histórico local")
             toggle.connect("clicked", self.toggle_performance_history)
             analyze = Gtk.Button(label="Analisar últimos 15 min")
@@ -4316,7 +4804,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             clear.set_sensitive(sample_count > 0)
             clear.connect("clicked", self.clear_performance_history)
             for button in (toggle, analyze, clear):
-                actions.pack_start(button, False, False, 0)
+                button.set_halign(Gtk.Align.START)
+                actions.add(button)
             card.pack_start(actions, False, False, 4)
 
             ai_card = self.card("Explicação de gargalos com IA local")
@@ -4329,8 +4818,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             privacy_note.set_line_wrap(True)
             privacy_note.get_style_context().add_class("muted")
             ai_card.pack_start(privacy_note, False, False, 0)
-            ai_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            ai_controls = self.make_action_flow()
             model_combo = Gtk.ComboBoxText()
+            model_combo.set_size_request(250, -1)
             for item in self.ai_models:
                 label = item["name"]
                 if item.get("parameter_size"):
@@ -4341,11 +4831,12 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             model_combo.set_sensitive(bool(self.ai_models) and not self.ai_busy)
             model_combo.connect("changed", self.select_local_ai_model)
             self.ai_model_combo = model_combo
-            ai_controls.pack_start(model_combo, True, True, 0)
+            ai_controls.add(model_combo)
             check_ai = Gtk.Button(label="Verificar Ollama local")
             check_ai.set_sensitive(not self.ai_busy)
             check_ai.connect("clicked", self.request_local_ai_check)
-            ai_controls.pack_start(check_ai, False, False, 0)
+            check_ai.set_halign(Gtk.Align.START)
+            ai_controls.add(check_ai)
             explain_ai = Gtk.Button(label="Explicar com IA local")
             explain_ai.get_style_context().add_class("action")
             explain_ai.set_sensitive(
@@ -4354,7 +4845,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 and sample_count >= MIN_HISTORY_SAMPLES
             )
             explain_ai.connect("clicked", self.request_local_ai_explanation)
-            ai_controls.pack_start(explain_ai, False, False, 0)
+            explain_ai.set_halign(Gtk.Align.START)
+            ai_controls.add(explain_ai)
             ai_card.pack_start(ai_controls, False, False, 4)
             if sample_count < MIN_HISTORY_SAMPLES:
                 history_hint = Gtk.Label(
@@ -4389,44 +4881,73 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             return group
 
         def make_grid(self) -> Any:
-            grid = Gtk.Grid()
-            grid.set_column_spacing(14)
-            grid.set_row_spacing(14)
-            grid.set_column_homogeneous(True)
+            flow = Gtk.FlowBox()
+            flow.get_style_context().add_class("content-grid")
+            flow.set_selection_mode(Gtk.SelectionMode.NONE)
+            flow.set_min_children_per_line(1)
+            flow.set_max_children_per_line(2)
+            flow.set_column_spacing(22)
+            flow.set_row_spacing(22)
+            flow.set_homogeneous(True)
+            flow.set_valign(Gtk.Align.START)
+            return flow
+
+        def make_action_flow(self) -> Any:
+            flow = Gtk.FlowBox()
+            flow.get_style_context().add_class("action-flow")
+            flow.set_selection_mode(Gtk.SelectionMode.NONE)
+            flow.set_min_children_per_line(1)
+            flow.set_max_children_per_line(3)
+            flow.set_column_spacing(10)
+            flow.set_row_spacing(10)
+            flow.set_homogeneous(False)
+            flow.set_valign(Gtk.Align.START)
+            return flow
+
+        def add_grid_cards(self, cards: list[Any]) -> Any:
+            grid = self.make_grid()
+            for card in cards:
+                card.set_hexpand(True)
+                card.set_valign(Gtk.Align.START)
+                card.set_size_request(400, -1)
+                grid.add(card)
+            self.content.pack_start(grid, False, False, 0)
             return grid
 
         def render_page(self) -> None:
             for child in self.content.get_children():
                 self.content.remove(child)
             if not self.data:
-                placeholder = Gtk.Label(label="Carregando informações do computador…")
-                placeholder.set_xalign(0)
-                placeholder.get_style_context().add_class("muted")
-                self.content.pack_start(placeholder, False, False, 0)
+                loading = self.card("Preparando o BooM")
+                self.metric(loading, "Lendo informações do computador", "A janela continua responsiva durante a coleta local.")
+                spinner = Gtk.Spinner()
+                spinner.start()
+                spinner.set_halign(Gtk.Align.START)
+                loading.pack_start(spinner, False, False, 0)
+                self.add_card(loading)
                 self.content.show_all()
                 return
             cpu = self.data.get("cpu", {})
             memory = self.data.get("memory") or {}
             os_data = self.data.get("os", {})
             if self.page == PAGE_OVERVIEW:
-                grid = self.make_grid()
+                self.add_section_heading(
+                    "Uso em tempo real",
+                    "Atividade atual dos componentes, conforme os sensores e drivers disponíveis.",
+                )
                 cpu_card = self.card("Processador")
+                cpu_card.get_style_context().add_class("performance-cpu")
                 usage = cpu.get("usage_percent")
                 cpu_frequency = cpu.get("frequency", {})
                 cpu_detail = f"{cpu.get('model', UNAVAILABLE)} · clock médio {format_frequency(cpu_frequency.get('average_mhz'))}"
-                self.metric(cpu_card, f"{usage:.1f}%" if isinstance(usage, (int, float)) else UNAVAILABLE, cpu_detail)
-                mem_card = self.card("Memória")
-                used = memory.get("used")
-                total = memory.get("total")
-                percent = used * 100 / total if total else 0
-                self.metric(mem_card, f"{format_bytes(used)} usados", f"de {format_bytes(total)} · {percent:.1f}% em uso" if total else UNAVAILABLE)
-                disk = next((item for item in self.data.get("disks", []) if item.get("mount") == "/"), None)
-                if not disk:
-                    disk = next(iter(self.data.get("disks", [])), None)
-                disk_card = self.card("Armazenamento")
-                self.metric(disk_card, f"{disk['percent']}% usado" if disk else UNAVAILABLE, f"{disk['mount']} · {format_bytes(disk['available'])} livre" if disk else "Nenhum volume disponível")
-                os_card = self.card("Sistema operacional")
-                self.metric(os_card, os_data.get("name", UNAVAILABLE), f"Kernel {os_data.get('kernel', UNAVAILABLE)} · ligado há {format_uptime(self.data.get('uptime_seconds'))}")
+                self.metric(
+                    cpu_card,
+                    f"{usage:.1f}%" if isinstance(usage, (int, float)) else UNAVAILABLE,
+                    cpu_detail,
+                    progress=usage if isinstance(usage, (int, float)) else None,
+                )
+                self.add_row(cpu_card, "Núcleos lógicos", str(cpu.get("cores") or UNAVAILABLE))
+
                 gpu = next(iter(self.data.get("gpu_metrics", [])), {})
                 gpu_inventory = self.data.get("gpus", [])
                 gpu_name = gpu.get("name") or next(iter(gpu_inventory), UNAVAILABLE)
@@ -4438,29 +4959,65 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     f"clock {format_frequency(gpu.get('graphics_clock_mhz'))}" if gpu else None,
                 )))
                 gpu_card = self.card("Placa de vídeo")
+                gpu_card.get_style_context().add_class("performance-gpu")
                 gpu_usage_label = gpu_utilization_label(gpu)
                 gpu_usage_text = (
                     f"{gpu_usage:.1f}% de uso"
                     if gpu_usage_label == "Uso do núcleo gráfico"
                     else f"{gpu_usage:.1f}% · {gpu_usage_label.casefold()}"
                 ) if isinstance(gpu_usage, (int, float)) else "Telemetria indisponível"
-                self.metric(gpu_card, gpu_usage_text, gpu_detail)
+                self.metric(
+                    gpu_card,
+                    gpu_usage_text,
+                    gpu_detail,
+                    progress=gpu_usage if isinstance(gpu_usage, (int, float)) else None,
+                )
                 for label, value in (
-                    ("Clock da memória", format_frequency(gpu.get("memory_clock_mhz")) if gpu else UNAVAILABLE),
                     ("VRAM usada / total", format_vram_usage(gpu)),
-                    ("Atividade do controlador de memória", f"{gpu['memory_utilization_percent']:.0f}%" if isinstance(gpu.get("memory_utilization_percent"), (int, float)) else UNAVAILABLE),
-                    ("Potência", f"{gpu['power_draw_watts']:.1f} W" if isinstance(gpu.get("power_draw_watts"), (int, float)) else UNAVAILABLE),
+                    (
+                        "Controlador de memória",
+                        f"{gpu['memory_utilization_percent']:.0f}%"
+                        if isinstance(gpu.get("memory_utilization_percent"), (int, float)) else UNAVAILABLE,
+                    ),
+                    ("Clock da memória", format_frequency(gpu.get("memory_clock_mhz")) if gpu else UNAVAILABLE),
                 ):
                     self.add_row(gpu_card, label, value)
-                if isinstance(gpu.get("shared_memory_used_mib"), (int, float)) or isinstance(gpu.get("shared_memory_total_mib"), (int, float)):
-                    shared_used = gpu.get("shared_memory_used_mib")
-                    shared_total = gpu.get("shared_memory_total_mib")
-                    shared_value = (
-                        f"{shared_used:.0f} / {shared_total:.0f} MiB"
-                        if isinstance(shared_used, (int, float)) and isinstance(shared_total, (int, float))
-                        else UNAVAILABLE
-                    )
-                    self.add_row(gpu_card, "GTT compartilhada", shared_value)
+                self.add_grid_cards([cpu_card, gpu_card])
+
+                self.add_section_heading("Capacidade", "Memória do sistema e espaço do volume principal.")
+                mem_card = self.card("Memória")
+                used = memory.get("used")
+                total = memory.get("total")
+                percent = used * 100 / total if isinstance(used, (int, float)) and isinstance(total, (int, float)) and total else None
+                self.metric(
+                    mem_card,
+                    f"{format_bytes(used)} usados",
+                    f"de {format_bytes(total)} · {percent:.1f}% em uso" if percent is not None else "Capacidade indisponível",
+                    progress=percent,
+                )
+                self.add_row(mem_card, "Disponível", format_bytes(memory.get("available")))
+                disk = next((item for item in self.data.get("disks", []) if item.get("mount") == "/"), None)
+                if not disk:
+                    disk = next(iter(self.data.get("disks", [])), None)
+                disk_card = self.card("Armazenamento")
+                disk_percent = disk.get("percent") if disk else None
+                disk_available = disk.get("available") if disk else None
+                disk_mount = disk.get("mount") if disk else None
+                self.metric(
+                    disk_card,
+                    f"{disk_percent}% usado" if isinstance(disk_percent, (int, float)) else UNAVAILABLE,
+                    f"{disk_mount} · {format_bytes(disk_available)} livre" if disk else "Nenhum volume disponível",
+                    progress=disk_percent if isinstance(disk_percent, (int, float)) else None,
+                )
+                if disk:
+                    self.add_row(disk_card, "Dispositivo", disk.get("device", UNAVAILABLE))
+                self.add_grid_cards([mem_card, disk_card])
+
+                self.add_section_heading("Sistema e temperaturas")
+                os_card = self.card("Sistema operacional")
+                self.metric(os_card, os_data.get("name", UNAVAILABLE), f"Kernel {os_data.get('kernel', UNAVAILABLE)}")
+                self.add_row(os_card, "Tempo ligado", format_uptime(self.data.get("uptime_seconds")))
+                self.add_row(os_card, "Computador", os_data.get("hostname", UNAVAILABLE))
                 power = self.data.get("power", {})
                 battery = next(iter(power.get("batteries", [])), {})
                 power_card = self.card("Energia")
@@ -4470,17 +5027,36 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     self.add_row(power_card, "Potência", f"{battery['power_watts']:.1f} W" if isinstance(battery.get("power_watts"), (int, float)) else UNAVAILABLE)
                 else:
                     self.metric(power_card, power.get("status", "Nenhuma bateria detectada."), "Leitura local de /sys/class/power_supply")
-                for index, card in enumerate((cpu_card, mem_card, gpu_card, disk_card, os_card)):
-                    grid.attach(card, index % 2, index // 2, 1, 1)
-                grid.attach(power_card, 1, 2, 1, 1)
-                self.content.pack_start(grid, False, False, 0)
+                if power.get("ac_online") is not None:
+                    self.add_row(power_card, "Alimentação externa", "Conectada" if power["ac_online"] else "Desconectada")
                 thermal = self.card("Sensores térmicos")
-                if self.data.get("temperatures"):
-                    for item in self.data["temperatures"]:
-                        self.add_row(thermal, item["name"], f"{item['celsius']:.1f} °C")
+                temperatures = self.data.get("temperatures", [])
+                valid_temperatures = [
+                    item for item in temperatures
+                    if isinstance(item.get("celsius"), (int, float)) and math.isfinite(float(item["celsius"]))
+                ]
+                cpu_temperatures = [
+                    float(item["celsius"]) for item in cpu_temperature_readings(temperatures)
+                    if isinstance(item.get("celsius"), (int, float)) and math.isfinite(float(item["celsius"]))
+                ]
+                gpu_temperatures = [
+                    float(item["temperature_celsius"]) for item in self.data.get("gpu_metrics", [])
+                    if isinstance(item.get("temperature_celsius"), (int, float))
+                    and math.isfinite(float(item["temperature_celsius"]))
+                ]
+                self.add_row(
+                    thermal,
+                    "CPU",
+                    f"{max(cpu_temperatures):.1f} °C" if cpu_temperatures else UNAVAILABLE,
+                )
+                self.add_row(thermal, "GPU", f"{max(gpu_temperatures):.1f} °C" if gpu_temperatures else UNAVAILABLE)
+                if valid_temperatures:
+                    hottest = max(valid_temperatures, key=lambda item: float(item["celsius"]))
+                    self.add_row(thermal, "Maior leitura", f"{hottest['name']} · {hottest['celsius']:.1f} °C")
+                    self.add_row(thermal, "Sensores", str(len(valid_temperatures)))
                 else:
                     self.add_row(thermal, "Leitura", "Sem sensores compatíveis disponíveis")
-                self.add_card(thermal)
+                self.add_grid_cards([os_card, power_card, thermal])
             elif self.page == PAGE_SYSTEM:
                 system = self.card("Inventário do sistema")
                 platform_details = self.data.get("platform_details", {})
@@ -4505,7 +5081,6 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     ("Computador", os_data.get("hostname", UNAVAILABLE)),
                 ):
                     self.add_row(system, label, value)
-                self.add_card(system)
                 cpu_clocks = self.card("Clock atual por núcleo")
                 frequency_cores = cpu.get("frequency", {}).get("cores", [])
                 if frequency_cores:
@@ -4514,14 +5089,13 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     self.add_row(cpu_clocks, "Fonte", cpu.get("frequency", {}).get("source") or UNAVAILABLE)
                 else:
                     self.add_row(cpu_clocks, "Leitura", "Frequência atual por núcleo indisponível neste kernel/driver")
-                self.add_card(cpu_clocks)
+                self.add_grid_cards([system, cpu_clocks])
                 thermal = self.card("Temperaturas")
                 for item in self.data.get("temperatures", []) or [{"name": "Sensores", "celsius": None}]:
                     value = f"{item['celsius']:.1f} °C" if item["celsius"] is not None else "Sem leitura disponível"
                     if item.get("source") and item["celsius"] is not None:
                         value += f" · {item['source']}"
                     self.add_row(thermal, item["name"], value)
-                self.add_card(thermal)
                 other_sensors = self.card("Outras leituras de hardware")
                 labels = {"fan": "Ventoinha", "voltage": "Tensão", "current": "Corrente", "power": "Potência"}
                 additional_readings = [item for item in self.data.get("sensor_readings", []) if item.get("kind") != "temperature"]
@@ -4531,7 +5105,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 if not additional_readings:
                     self.add_row(other_sensors, "Leitura", "Este hardware não expôs ventoinhas, tensão, corrente ou potência pelo backend disponível.")
                 self.add_row(other_sensors, "Fonte", self.data.get("sensors_status", "lm-sensors / hwmon / sysfs"))
-                self.add_card(other_sensors)
+                self.add_grid_cards([thermal, other_sensors])
                 firmware = self.card("Firmware e dispositivos compatíveis")
                 firmware_info = self.firmware_info
                 if firmware_info.get("state") == "unchecked":
@@ -4552,7 +5126,6 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 check_firmware.set_tooltip_text("Consulta a lista de dispositivos e os metadados que o fwupd já possui.")
                 check_firmware.connect("clicked", self.request_firmware_check)
                 firmware.pack_start(check_firmware, False, False, 4)
-                self.add_card(firmware)
                 optional_tools = self.card("Ferramentas opcionais")
                 missing_tools = missing_optional_packages()
                 self.add_row(
@@ -4570,7 +5143,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     install_tools.set_sensitive(not self.optional_installing)
                     install_tools.connect("clicked", self.request_optional_install)
                     optional_tools.pack_start(install_tools, False, False, 4)
-                self.add_card(optional_tools)
+                self.add_grid_cards([firmware, optional_tools])
                 energy = self.card("Energia e bateria")
                 power = self.data.get("power", {})
                 batteries = power.get("batteries", [])
@@ -4583,7 +5156,6 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     self.add_row(energy, "Estado", power.get("status", "Nenhuma bateria detectada."))
                 if power.get("ac_online") is not None:
                     self.add_row(energy, "Alimentação externa", "Conectada" if power["ac_online"] else "Desconectada")
-                self.add_card(energy)
                 profile_card = self.card("Perfis de energia do sistema")
                 profiles = self.data.get("power_profiles", {})
                 self.add_row(profile_card, "Estado", profiles.get("message", "Indisponível"))
@@ -4600,13 +5172,15 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     if current_profile in profiles.get("profiles", []):
                         choices.set_active_id(current_profile)
                     choices.set_sensitive(not self.power_profile_busy)
-                    profile_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                    profile_controls.pack_start(choices, True, True, 0)
+                    profile_controls = self.make_action_flow()
+                    choices.set_size_request(230, -1)
+                    profile_controls.add(choices)
                     apply_profile = Gtk.Button(label="Aplicar perfil")
                     apply_profile.get_style_context().add_class("action")
                     apply_profile.set_sensitive(not self.power_profile_busy)
                     apply_profile.connect("clicked", self.request_power_profile_change, choices)
-                    profile_controls.pack_start(apply_profile, False, False, 0)
+                    apply_profile.set_halign(Gtk.Align.START)
+                    profile_controls.add(apply_profile)
                     profile_card.pack_start(profile_controls, False, False, 4)
                     restore_state = profiles.get("restore_state")
                     if restore_state:
@@ -4632,7 +5206,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                         "Perfil anterior salvo",
                         POWER_PROFILE_LABELS[restore_state["restore_profile"]] + " · aguarda o serviço ficar disponível",
                     )
-                self.add_card(profile_card)
+                self.add_grid_cards([energy, profile_card])
                 self.add_card(self.performance_history_card())
             elif self.page == PAGE_MEMORY:
                 used = memory.get("used")
@@ -4666,7 +5240,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 swap_progress.set_fraction(max(0.0, min(1.0, (swap_percent or 0) / 100)))
                 swap.pack_start(swap_progress, False, False, 2)
                 self.add_row(swap, "Disponível", format_bytes(swap_available) if swap_total else UNAVAILABLE)
-                self.add_card(swap)
+                self.add_grid_cards([ram, swap])
 
                 modules_card = self.card("Módulos físicos de RAM · SMBIOS")
                 modules = self.data.get("memory_modules", [])
@@ -4694,6 +5268,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
 
                 gpu_metrics = self.data.get("gpu_metrics", [])
                 if gpu_metrics:
+                    vram_cards = []
                     for gpu in gpu_metrics:
                         vram_card = self.card(f"VRAM · {gpu.get('name') or 'GPU'}")
                         vram_percent = vram_usage_percent(gpu)
@@ -4717,7 +5292,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                                 else UNAVAILABLE
                             )
                             self.add_row(vram_card, "GTT compartilhada reportada pelo driver", shared_value)
-                        self.add_card(vram_card)
+                        vram_cards.append(vram_card)
+                    self.add_grid_cards(vram_cards)
                 else:
                     vram_card = self.card("Memória da GPU · VRAM")
                     for gpu in self.data.get("gpus", []) or [UNAVAILABLE]:
@@ -4731,6 +5307,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 self.add_card(inventory)
                 gpu_metrics = self.data.get("gpu_metrics", [])
                 if gpu_metrics:
+                    graphics_cards = []
                     for gpu in gpu_metrics:
                         graphics = self.card(gpu.get("name") or "GPU")
                         self.add_row(graphics, "Driver", gpu.get("driver_version") or gpu.get("driver_name") or UNAVAILABLE)
@@ -4763,7 +5340,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                         if isinstance(engine_utilization, dict):
                             for engine, busy in engine_utilization.items():
                                 self.add_row(graphics, f"Motor · {engine}", f"{busy:.1f}%")
-                        self.add_card(graphics)
+                        graphics_cards.append(graphics)
+                    self.add_grid_cards(graphics_cards)
                 else:
                     telemetry = self.card("Telemetria da GPU")
                     self.add_row(telemetry, "Estado", self.data.get("gpu_metrics_status") or "Métricas ao vivo não fornecidas pelo adaptador/driver")
@@ -4777,6 +5355,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     empty = self.card("Volumes")
                     self.add_row(empty, "Estado", "Nenhum volume montado disponível")
                     self.add_card(empty)
+                volume_cards = []
                 for disk in disks:
                     item = self.card(disk["mount"])
                     self.metric(item, f"{disk['percent']}% usado", f"{disk['device']} · {disk['filesystem']}")
@@ -4786,7 +5365,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     self.add_row(item, "Usado", format_bytes(disk["used"]))
                     self.add_row(item, "Disponível", format_bytes(disk["available"]))
                     self.add_row(item, "Capacidade", format_bytes(disk["size"]))
-                    self.add_card(item)
+                    volume_cards.append(item)
+                if volume_cards:
+                    self.add_grid_cards(volume_cards)
                 disk_activity = self.card("Atividade de armazenamento")
                 disk_io = self.data.get("disk_io") or {}
                 busy = disk_io.get("busy_percent")
@@ -4829,11 +5410,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 network = self.data.get("network", {})
                 route = self.card("Rota padrão")
                 self.add_row(route, "Gateway", network.get("gateway") or UNAVAILABLE)
-                self.add_card(route)
                 interfaces = self.card("Interfaces de rede")
                 for item in network.get("interfaces", []) or [{"name": "Interfaces", "state": UNAVAILABLE, "addresses": []}]:
                     self.add_row(interfaces, item["name"], f"{item['state']} · {', '.join(item['addresses']) or 'sem IPv4'}")
-                self.add_card(interfaces)
                 diagnostic = self.card("Diagnóstico de conexão")
                 self.add_row(diagnostic, "Destinos", "Gateway padrão e 1.1.1.1")
                 for result in self.network_results:
@@ -4845,7 +5424,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 test_button.get_style_context().add_class("action")
                 test_button.connect("clicked", self.test_network)
                 diagnostic.pack_start(test_button, False, False, 4)
-                self.add_card(diagnostic)
+                self.add_grid_cards([route, diagnostic])
+                self.add_card(interfaces)
             elif self.page == PAGE_TESTS:
                 self.render_stress_page()
             elif self.page == PAGE_PROCESSES:
@@ -5156,24 +5736,27 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 "Benchmark de disco",
                 f"fio · {DISK_BENCHMARK_SIZE_MIB} MiB · leitura e escrita sequenciais diretas · pasta escolhida · arquivo removido ao terminar",
             )
-            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            actions = Gtk.Grid()
+            actions.set_column_spacing(12)
+            actions.set_row_spacing(12)
+            actions.set_column_homogeneous(True)
             cpu_button = Gtk.Button(label="Iniciar teste de CPU")
             cpu_button.get_style_context().add_class("action")
             cpu_button.set_sensitive(readiness["ready"] and not busy)
             cpu_button.connect("clicked", self.request_stress_test, "cpu")
-            actions.pack_start(cpu_button, False, False, 0)
+            actions.attach(cpu_button, 0, 0, 1, 1)
             memory_button = Gtk.Button(label="Iniciar teste de RAM")
             memory_button.get_style_context().add_class("action")
             memory_button.set_sensitive(readiness["ready"] and not busy and memory_command is not None)
             memory_button.set_tooltip_text(memory_error or "Usa até 25% da RAM disponível, limitado a 1 GiB.")
             memory_button.connect("clicked", self.request_stress_test, "memory")
-            actions.pack_start(memory_button, False, False, 0)
+            actions.attach(memory_button, 1, 0, 1, 1)
             gpu_button = Gtk.Button(label="Iniciar teste de GPU")
             gpu_button.get_style_context().add_class("action")
             gpu_button.set_sensitive(gpu_readiness["ready"] and not busy)
             gpu_button.set_tooltip_text(gpu_readiness["message"])
             gpu_button.connect("clicked", self.request_stress_test, "gpu")
-            actions.pack_start(gpu_button, False, False, 0)
+            actions.attach(gpu_button, 0, 1, 1, 1)
             fio_installed = bool(shutil.which("fio"))
             disk_button = Gtk.Button(label="Benchmark de disco" if fio_installed else "Instalar fio para benchmark")
             disk_button.get_style_context().add_class("action")
@@ -5183,11 +5766,11 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 if fio_installed else "fio está ausente; a instalação assistida revisará os pacotes ausentes e pedirá confirmação."
             )
             disk_button.connect("clicked", self.request_disk_benchmark)
-            actions.pack_start(disk_button, False, False, 0)
+            actions.attach(disk_button, 1, 1, 1, 1)
             cancel_button = Gtk.Button(label="Cancelar teste")
             cancel_button.set_sensitive(self.test_sessions().is_active())
             cancel_button.connect("clicked", self.cancel_stress_test)
-            actions.pack_end(cancel_button, False, False, 0)
+            actions.attach(cancel_button, 1, 2, 1, 1)
             options.pack_start(actions, False, False, 4)
             self.add_card(options)
             self.stress_widgets.update({
@@ -5278,11 +5861,35 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 self.render_page()
                 return
             kind_label = {"cpu": "CPU", "memory": "RAM", "gpu": "GPU"}.get(kind, kind)
-            details = {
-                "cpu": f"Duração máxima: {self.stress_duration_seconds} s. Workers de CPU: {self.stress_cpu_workers}. Carga limitada a 80% por worker.",
-                "memory": f"Duração máxima: {self.stress_duration_seconds} s. Um worker usará {format_bytes(int(command[command.index('--vm-bytes') + 1]))}; máximo de 25% da RAM disponível e 1 GiB.",
-                "gpu": f"Duração máxima: {self.stress_duration_seconds} s. Adaptador: {selected_gpu.get('name')}. Render node: {readiness['gpu_device']}. O BooM monitora as temperaturas da CPU e da GPU.",
-            }[kind]
+            if kind == "cpu":
+                details = (
+                    f"Duração máxima: {self.stress_duration_seconds} s. Workers de CPU: "
+                    f"{self.stress_cpu_workers}. Carga limitada a 80% por worker."
+                )
+            elif kind == "memory":
+                try:
+                    memory_bytes = int(command[command.index("--vm-bytes") + 1])
+                except (ValueError, IndexError):
+                    self.refresh_state.set_text("Não foi possível calcular a memória segura para este teste.")
+                    self.render_page()
+                    return
+                details = (
+                    f"Duração máxima: {self.stress_duration_seconds} s. Um worker usará "
+                    f"{format_bytes(memory_bytes)}; máximo de 25% da RAM disponível e 1 GiB."
+                )
+            elif kind == "gpu":
+                if not selected_gpu or not readiness.get("gpu_device"):
+                    self.refresh_state.set_text("Selecione uma GPU compatível antes de iniciar o teste.")
+                    self.render_page()
+                    return
+                details = (
+                    f"Duração máxima: {self.stress_duration_seconds} s. Adaptador: "
+                    f"{selected_gpu.get('name') or 'GPU selecionada'}. Render node: "
+                    f"{readiness['gpu_device']}. O BooM monitora as temperaturas da CPU e da GPU."
+                )
+            else:
+                self.refresh_state.set_text("Tipo de teste desconhecido.")
+                return
             dialog = Gtk.MessageDialog(
                 transient_for=self,
                 flags=Gtk.DialogFlags.MODAL,
@@ -5638,14 +6245,15 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             self.add_row(summary, "Encerramento", "SIGTERM normal · sem forçar · processos de sistema protegidos")
             search = Gtk.SearchEntry()
             search.set_placeholder_text("Filtrar por nome ou PID")
+            search.get_accessible().set_name("Filtrar processos por nome ou PID")
             summary.pack_start(search, False, False, 0)
             self.add_card(summary)
 
-            store = Gtk.ListStore(int, str, str, str, str, bool, int, str)
+            store = Gtk.ListStore(int, int, str, str, str, str, bool, int, str)
             for item in processes:
                 cpu = f"{item['cpu_percent']:.1f}%" if item.get("cpu_percent") is not None else "—"
                 store.append([
-                    item["pid"], item["name"], cpu, format_bytes(item["memory_bytes"]),
+                    item["pid"], item["ppid"], item["name"], cpu, format_bytes(item["memory_bytes"]),
                     item["state"], item["can_terminate"], item["start_ticks"],
                     "Encerrar" if item["can_terminate"] else "Protegido",
                 ])
@@ -5656,8 +6264,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             tree.set_headers_visible(True)
             tree.get_selection().set_mode(Gtk.SelectionMode.SINGLE)
             for title, column, expand in (
-                ("PID", 0, False), ("Processo", 1, True), ("CPU", 2, False),
-                ("RAM", 3, False), ("Estado", 4, False), ("Ação", 7, False),
+                ("PID", 0, False), ("PPID", 1, False), ("Processo", 2, True),
+                ("CPU", 3, False), ("RAM", 4, False), ("Estado", 5, False),
+                ("Ação", 8, False),
             ):
                 self.add_tree_column(tree, title, column, expand)
             list_scroll = Gtk.ScrolledWindow()
@@ -5666,37 +6275,89 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             list_scroll.add(tree)
             self.content.pack_start(list_scroll, True, True, 0)
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            terminate = Gtk.Button(label="Encerrar processo")
+            terminate = Gtk.Button(label="Encerrar processo selecionado")
             terminate.get_style_context().add_class("action")
             terminate.set_sensitive(False)
-            tree.get_selection().connect("changed", self.on_process_selection, terminate)
+            terminate_tree = Gtk.Button(label="Encerrar árvore")
+            terminate_tree.set_sensitive(False)
+            tree_hint = Gtk.Label(label="Selecione um processo para ver quantos descendentes seriam incluídos.")
+            tree_hint.set_xalign(0)
+            tree_hint.set_line_wrap(True)
+            tree_hint.get_style_context().add_class("muted")
+            tree.get_selection().connect(
+                "changed", self.on_process_selection, terminate, terminate_tree, tree_hint,
+            )
             terminate.connect("clicked", self.request_process_termination, tree.get_selection())
+            terminate_tree.connect("clicked", self.request_process_tree_termination, tree.get_selection())
             actions.pack_start(terminate, False, False, 0)
-            note = Gtk.Label(label="Encerrar envia SIGTERM e pode fechar um aplicativo com trabalho não salvo.")
+            actions.pack_start(terminate_tree, False, False, 0)
+            self.content.pack_start(actions, False, False, 0)
+            note = Gtk.Label(
+                label="Encerrar envia SIGTERM e pode fechar trabalho não salvo. A árvore inclui o processo selecionado e seus descendentes; filhos recebem o sinal antes dos pais. Processos protegidos bloqueiam a ação e filhos criados depois da confirmação podem continuar ativos."
+            )
             note.set_xalign(0)
             note.set_line_wrap(True)
             note.get_style_context().add_class("muted")
-            actions.pack_start(note, True, True, 0)
-            self.content.pack_start(actions, False, False, 0)
+            self.content.pack_start(note, False, False, 0)
+            self.content.pack_start(tree_hint, False, False, 0)
 
         def process_matches(self, model: Any, iterator: Any, search: Any) -> bool:
             query = search.get_text().strip().casefold()
             if not query:
                 return True
-            return query in model.get_value(iterator, 1).casefold() or query in str(model.get_value(iterator, 0))
+            return query in model.get_value(iterator, 2).casefold() or query in str(model.get_value(iterator, 0))
 
-        def on_process_selection(self, selection: Any, button: Any) -> None:
+        def on_process_selection(
+            self, selection: Any, process_button: Any, tree_button: Any, hint: Any,
+        ) -> None:
             model, iterator = selection.get_selected()
-            button.set_sensitive(iterator is not None and bool(model.get_value(iterator, 5)))
+            if iterator is None:
+                process_button.set_sensitive(False)
+                tree_button.set_sensitive(False)
+                tree_button.set_label("Encerrar árvore")
+                hint.set_text("Selecione um processo para ver quantos descendentes seriam incluídos.")
+                return
+
+            can_terminate = bool(model.get_value(iterator, 6))
+            process_button.set_sensitive(can_terminate)
+            pid = int(model.get_value(iterator, 0))
+            name = model.get_value(iterator, 2)
+            start_ticks = int(model.get_value(iterator, 7))
+            try:
+                snapshot = process_tree_snapshot(
+                    pid, start_ticks, process_records=self.manager_data.get("processes", []),
+                )
+            except (OSError, ValueError):
+                tree_button.set_label("Encerrar árvore")
+                tree_button.set_sensitive(False)
+                hint.set_text("A árvore mudou; atualize a lista antes de encerrar.")
+                return
+
+            total = len(snapshot)
+            protected = sum(not item["can_terminate"] for item in snapshot)
+            tree_button.set_label(f"Encerrar árvore ({total})")
+            tree_button.set_sensitive(can_terminate and total > 1 and protected == 0)
+            if not can_terminate:
+                hint.set_text(f"{name} está protegido ou pertence a outro usuário.")
+            elif total <= 1:
+                hint.set_text(f"{name} não tem descendentes nesta captura.")
+            elif protected:
+                hint.set_text(
+                    f"A árvore contém {protected} processo(s) protegido(s); nenhum receberá sinal."
+                )
+            else:
+                hint.set_text(
+                    f"{total} processos nesta árvore: o selecionado e {total - 1} descendentes."
+                )
 
         def request_process_termination(self, _button: Any, selection: Any) -> None:
             model, iterator = selection.get_selected()
             if iterator is None:
                 return
             pid = int(model.get_value(iterator, 0))
-            name = model.get_value(iterator, 1)
-            start_ticks = int(model.get_value(iterator, 6))
-            if not model.get_value(iterator, 5):
+            name = model.get_value(iterator, 2)
+            start_ticks = int(model.get_value(iterator, 7))
+            if not model.get_value(iterator, 6):
                 self.refresh_state.set_text("Esse processo está protegido.")
                 return
             dialog = Gtk.MessageDialog(
@@ -5720,18 +6381,100 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             except (OSError, ValueError) as exc:
                 self.refresh_state.set_text(f"Não foi possível encerrar: {exc}")
 
+        def request_process_tree_termination(self, _button: Any, selection: Any) -> None:
+            model, iterator = selection.get_selected()
+            if iterator is None:
+                return
+            pid = int(model.get_value(iterator, 0))
+            name = model.get_value(iterator, 2)
+            start_ticks = int(model.get_value(iterator, 7))
+            if not model.get_value(iterator, 6):
+                self.refresh_state.set_text("Esse processo está protegido.")
+                return
+            try:
+                snapshot = process_tree_snapshot(pid, start_ticks)
+            except (OSError, ValueError) as exc:
+                self.refresh_state.set_text(f"Não foi possível ler a árvore: {exc}")
+                return
+            if len(snapshot) <= 1:
+                self.refresh_state.set_text("O processo selecionado não tem descendentes nesta captura.")
+                self.refresh_manager_data()
+                return
+            protected = [item for item in snapshot if not item["can_terminate"]]
+            if protected:
+                examples = ", ".join(
+                    f"{item['name']} (PID {item['pid']})" for item in protected[:3]
+                )
+                self.refresh_state.set_text(
+                    f"A árvore contém processo(s) protegido(s): {examples}; nenhum sinal foi enviado."
+                )
+                return
+
+            total = len(snapshot)
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=Gtk.DialogFlags.MODAL,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.CANCEL,
+                text=f"Encerrar árvore de {name} (PID {pid})?",
+            )
+            dialog.format_secondary_text(
+                f"O BooM enviará SIGTERM para {total} processos: o selecionado e {total - 1} descendentes, começando pelos filhos. Isso pode fechar trabalho não salvo. Processos criados depois desta captura podem continuar ativos."
+            )
+            dialog.add_button("Encerrar árvore normalmente", Gtk.ResponseType.ACCEPT)
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.ACCEPT:
+                self.refresh_state.set_text("Encerramento da árvore cancelado.")
+                return
+            try:
+                result = terminate_process_tree(pid, start_ticks, process_records=snapshot)
+                sent = len(result["sent"])
+                changed = len(result["changed"])
+                failed = result["failed"]
+                details = []
+                if changed:
+                    details.append(f"{changed} já encerrados ou alterados")
+                if failed:
+                    first = failed[0]
+                    target = first["process"]
+                    details.append(
+                        f"{len(failed)} falhas, por exemplo {target['name']} (PID {target['pid']})"
+                    )
+                suffix = " · " + "; ".join(details) if details else ""
+                self.refresh_state.set_text(
+                    f"SIGTERM enviado para {sent} de {result['total']} processos da árvore{suffix}."
+                )
+                self.refresh_manager_data()
+            except (OSError, ValueError) as exc:
+                self.refresh_state.set_text(f"Não foi possível encerrar a árvore: {exc}")
+
         def render_application_page(self) -> None:
             applications = self.manager_data.get("applications", [])
             card = self.card("Aplicativos gráficos instalados")
             self.add_row(card, "Encontrados", str(len(applications)))
-            self.add_row(card, "Origem", "Lançadores .desktop visíveis para esta sessão")
+            self.add_row(card, "Origem", "APT, Flatpak e outros lançadores visíveis para esta sessão")
             search = Gtk.SearchEntry()
             search.set_placeholder_text("Buscar aplicativo")
+            search.get_accessible().set_name("Buscar aplicativos por nome ou ID")
             card.pack_start(search, False, False, 0)
+            hint = Gtk.Label(
+                label="Desinstalação APT purga arquivos e configurações do sistema, sem remover dependências compartilhadas ou dados pessoais. Flatpak também apaga os dados do aplicativo deste usuário. Origens não identificadas não podem ser removidas aqui."
+            )
+            hint.set_xalign(0)
+            hint.set_line_wrap(True)
+            hint.get_style_context().add_class("muted")
+            card.pack_start(hint, False, False, 0)
             self.add_card(card)
-            store = Gtk.ListStore(str, str, str, bool, str)
+            store = Gtk.ListStore(str, str, str, bool, str, str, bool, object)
             for app in applications:
-                store.append([app["name"], app["id"], app["path"], app["available"], "Sim" if app["available"] else "Executável ausente"])
+                store.append([
+                    app["name"], app["id"], app["path"], app["available"],
+                    "Sim" if app["available"] else "Executável ausente",
+                    app.get("source", "Origem não identificada"),
+                    app.get("uninstallable", False),
+                    app.get("uninstall_target"),
+                ])
             filtered = store.filter_new()
             filtered.set_visible_func(
                 lambda model, iterator, entry: not entry.get_text().strip()
@@ -5741,7 +6484,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             )
             search.connect("search-changed", lambda entry: filtered.refilter())
             tree = Gtk.TreeView(model=filtered)
-            for title, column, expand in (("Aplicativo", 0, True), ("ID", 1, False), ("Disponível", 4, False)):
+            for title, column, expand in (
+                ("Aplicativo", 0, True), ("ID", 1, False), ("Origem", 5, False), ("Disponível", 4, False),
+            ):
                 self.add_tree_column(tree, title, column, expand)
             tree.get_selection().set_mode(Gtk.SelectionMode.SINGLE)
             list_scroll = Gtk.ScrolledWindow()
@@ -5749,16 +6494,33 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             list_scroll.set_min_content_height(330)
             list_scroll.add(tree)
             self.content.pack_start(list_scroll, True, True, 0)
-            button = Gtk.Button(label="Abrir aplicativo selecionado")
-            button.get_style_context().add_class("action")
-            button.set_sensitive(False)
-            tree.get_selection().connect("changed", self.on_application_selection, button)
-            button.connect("clicked", self.launch_selected_application, tree.get_selection())
-            self.content.pack_start(button, False, False, 0)
+            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            open_button = Gtk.Button(label="Abrir aplicativo selecionado")
+            open_button.get_style_context().add_class("action")
+            open_button.set_sensitive(False)
+            remove_button = Gtk.Button(label="Desinstalar aplicativo selecionado")
+            remove_button.set_sensitive(False)
+            tree.get_selection().connect(
+                "changed", self.on_application_selection, open_button, remove_button
+            )
+            open_button.connect("clicked", self.launch_selected_application, tree.get_selection())
+            remove_button.connect("clicked", self.uninstall_selected_application, tree.get_selection())
+            actions.pack_start(open_button, True, True, 0)
+            actions.pack_start(remove_button, False, False, 0)
+            self.content.pack_start(actions, False, False, 0)
 
-        def on_application_selection(self, selection: Any, button: Any) -> None:
+        def on_application_selection(self, selection: Any, open_button: Any, remove_button: Any) -> None:
             model, iterator = selection.get_selected()
-            button.set_sensitive(iterator is not None and bool(model.get_value(iterator, 3)))
+            open_button.set_sensitive(
+                iterator is not None
+                and bool(model.get_value(iterator, 3))
+                and not self.application_uninstalling
+            )
+            remove_button.set_sensitive(
+                iterator is not None
+                and bool(model.get_value(iterator, 6))
+                and not self.application_uninstalling
+            )
 
         def launch_selected_application(self, _button: Any, selection: Any) -> None:
             model, iterator = selection.get_selected()
@@ -5766,6 +6528,71 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 return
             message = launch_desktop_application(model.get_value(iterator, 2))
             self.refresh_state.set_text(message)
+
+        def uninstall_selected_application(self, _button: Any, selection: Any) -> None:
+            model, iterator = selection.get_selected()
+            if iterator is None or self.application_uninstalling:
+                return
+            name = model.get_value(iterator, 0)
+            target = model.get_value(iterator, 7)
+            if not target:
+                return
+            preview = preview_desktop_application_uninstall(target)
+            if not preview["ok"]:
+                self.refresh_state.set_text(preview["message"])
+                return
+            if target["manager"] == "apt":
+                details = (
+                    f"{preview['message']} APT purgará configurações do sistema; arquivos pessoais em sua pasta "
+                    "pessoal não serão apagados."
+                )
+            else:
+                details = preview["message"] + " Esta ação não pode ser desfeita."
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=Gtk.DialogFlags.MODAL,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.CANCEL,
+                text=f"Desinstalar {name}?",
+            )
+            dialog.format_secondary_text(details)
+            dialog.add_button("Desinstalar", Gtk.ResponseType.ACCEPT)
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.ACCEPT:
+                self.refresh_state.set_text("Desinstalação cancelada.")
+                return
+            self.application_uninstalling = True
+            self.refresh_state.set_text(f"Removendo {name}; aguarde a autenticação do sistema se solicitada…")
+            self.render_page()
+
+            def worker() -> None:
+                try:
+                    result = uninstall_desktop_application(target)
+                except Exception as exc:
+                    result = {"ok": False, "message": f"Falha ao desinstalar {name}: {exc}"}
+                manager_data = None
+                if result["ok"]:
+                    try:
+                        manager_data = collect_manager_state()
+                    except Exception as exc:
+                        result["message"] += f" A lista não pôde ser atualizada: {exc}"
+                GLib.idle_add(self.finish_application_uninstall, result, name, manager_data)
+
+            threading.Thread(target=worker, name="boom-application-uninstall", daemon=True).start()
+
+        def finish_application_uninstall(
+            self, result: dict[str, Any], name: str, manager_data: dict[str, Any] | None,
+        ) -> bool:
+            self.application_uninstalling = False
+            if manager_data is not None:
+                self.manager_data = manager_data
+            self.refresh_state.set_text(
+                f"{name}: {result['message']}" if result["ok"] else result["message"]
+            )
+            self.render_page()
+            return False
+
 
         def render_startup_page(self) -> None:
             entries = self.manager_data.get("startup", [])

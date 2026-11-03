@@ -5,7 +5,24 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ## [Unreleased]
 
-Sem mudanças publicadas.
+### Adicionado
+
+- **Programas** desinstala aplicativos identificados por APT ou Flatpak após
+  confirmação; APT purga o pacote e bloqueia remoções de outros pacotes, e
+  Flatpak também apaga os dados associados do aplicativo.
+- **Processos** mostra PID/PPID e oferece ações separadas para encerrar apenas o
+  processo selecionado ou o processo selecionado com seus descendentes. A ação
+  de árvore confirma o total, envia `SIGTERM` dos filhos para os pais e bloqueia
+  árvores que incluam processos protegidos.
+- **Interface GTK** recebe uma direção visual nova: navegação verde-floresta com
+  ícones, canvas claro, cartões de alto contraste e leituras de CPU/GPU em
+  destaque. As dez áreas ficam agrupadas em Monitorar, Gerenciar e Diagnosticar;
+  cartões refluem conforme o espaço, fileiras de ações se reorganizam em janelas
+  estreitas e botões da barra de título ficam fora do estilo dos controles do
+  BooM. O menu lateral é um painel arredondado com espaço externo em todas as
+  bordas e usa o emoji 💣 na marca. Padding, gutters e rodapé foram ajustados.
+- **Testes** prepara o texto de confirmação apenas para o tipo de carga escolhido,
+  evitando falhas ao iniciar CPU, RAM ou GPU.
 
 ## [0.2.1] - 2026-11-02
 

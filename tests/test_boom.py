@@ -1236,10 +1236,94 @@ class ApplicationInventoryTests(unittest.TestCase):
         self.assertIsInstance(applications, list)
         self.assertIsInstance(startup, list)
         if applications:
-            self.assertIn("path", applications[0])
-            self.assertIn("available", applications[0])
+            self.assertIn("uninstallable", applications[0])
+            self.assertIn("source", applications[0])
         if startup:
             self.assertIn(startup[0]["enabled"], {"Ativo", "Desativado"})
+
+    def test_flatpak_export_is_only_removable_for_matching_installed_scope(self):
+        with tempfile.TemporaryDirectory() as home:
+            launcher_dir = Path(home) / ".local/share/flatpak/exports/share/applications"
+            launcher_dir.mkdir(parents=True)
+            launcher = launcher_dir / "org.example.App.desktop"
+            launcher.write_text("[Desktop Entry]\nName=Example\n", encoding="utf-8")
+            with patch.object(boom.Path, "home", return_value=Path(home)):
+                target = boom.desktop_application_uninstall_target(
+                    str(launcher), {"org.example.App": {"user"}}, {},
+                )
+                mismatch = boom.desktop_application_uninstall_target(
+                    str(launcher), {"org.example.App": {"system"}}, {},
+                )
+        self.assertEqual(target, {
+            "manager": "flatpak", "app_id": "org.example.App", "installation": "user",
+        })
+        self.assertIsNone(mismatch)
+
+    def test_apt_preview_blocks_removing_other_packages(self):
+        package = {"manager": "apt", "package": "example-app"}
+        with patch("boom.shutil.which", side_effect=lambda name: "/usr/bin/apt-get" if name == "apt-get" else None), patch(
+            "boom.run_command",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="Purg example-app [1.0]\nRemv shared-consumer [2.0]\n", stderr="",
+            ),
+        ):
+            preview = boom.preview_desktop_application_uninstall(package)
+        self.assertFalse(preview["ok"])
+        self.assertIn("shared-consumer", preview["message"])
+
+    def test_apt_uninstall_purges_only_confirmed_package(self):
+        package = {"manager": "apt", "package": "example-app"}
+        simulation = subprocess.CompletedProcess(args=[], returncode=0, stdout="Purg example-app [1.0]\n", stderr="")
+        with patch("boom.shutil.which", side_effect=lambda name: {
+            "apt-get": "/usr/bin/apt-get", "pkexec": "/usr/bin/pkexec",
+        }.get(name)), patch("boom.run_command", return_value=simulation), patch(
+            "boom.run_privileged_apt_step", return_value={"ok": True},
+        ) as execute:
+            result = boom.uninstall_desktop_application(package)
+        self.assertTrue(result["ok"])
+        self.assertEqual(execute.call_args.args[2], [
+            "purge", "--yes", "--no-auto-remove", "example-app",
+        ])
+
+    def test_flatpak_uninstall_also_deletes_application_data(self):
+        target = {"manager": "flatpak", "app_id": "org.example.App", "installation": "user"}
+        with patch("boom.shutil.which", side_effect=lambda name: "/usr/bin/flatpak" if name == "flatpak" else None), patch(
+            "boom.run_command",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+        ) as run:
+            result = boom.uninstall_desktop_application(target)
+        self.assertTrue(result["ok"])
+        self.assertEqual(run.call_args.args[0], [
+            "/usr/bin/flatpak", "uninstall", "--user", "--delete-data", "--assumeyes", "org.example.App",
+        ])
+
+    def test_uninstall_target_rejects_unrecognized_desktop_sources(self):
+        self.assertIsNone(boom.desktop_application_uninstall_target(
+            "/tmp/app.desktop", {}, {},
+        ))
+
+    def test_dpkg_owner_lookup_maps_only_single_package_matches(self):
+        launcher = "/usr/share/applications/example.desktop"
+        output = f"example-package: {launcher}\nshared-one, shared-two: /usr/share/applications/ambiguous.desktop\n"
+        with patch("boom.shutil.which", side_effect=lambda name: "/usr/bin/dpkg-query" if name == "dpkg-query" else None), patch(
+            "boom.run_command",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout=output, stderr=""),
+        ):
+            owners = boom.dpkg_desktop_owners([launcher, "/usr/share/applications/ambiguous.desktop"])
+        self.assertEqual(owners, {launcher: "example-package"})
+
+    def test_uninstall_rejects_invalid_package_and_flatpak_identifiers(self):
+        with patch("boom.shutil.which") as which, patch("boom.run_command") as run:
+            apt_result = boom.preview_desktop_application_uninstall({
+                "manager": "apt", "package": "example;command",
+            })
+            flatpak_result = boom.preview_desktop_application_uninstall({
+                "manager": "flatpak", "app_id": "--help", "installation": "user",
+            })
+        self.assertFalse(apt_result["ok"])
+        self.assertFalse(flatpak_result["ok"])
+        which.assert_not_called()
+        run.assert_not_called()
 
     def test_application_launch_uses_gio_without_shell(self):
         app = MagicMock()
