@@ -38,3 +38,12 @@ jobs:
           XDG_CONFIG_HOME="$config_home" /usr/bin/python3 boom.py --enable-autostart
           desktop-file-validate "$config_home/autostart/boom-monitor.desktop"
           XDG_CONFIG_HOME="$config_home" /usr/bin/python3 boom.py --disable-autostart
+      - name: Validate application launcher installer
+        run: |
+          data_home="$(mktemp -d)"
+          trap 'rm -rf "$data_home"' EXIT
+          XDG_DATA_HOME="$data_home" ./install-linux.sh
+          desktop-file-validate "$data_home/applications/com.boom.SystemMonitor.desktop"
+          test -s "$data_home/icons/hicolor/scalable/apps/com.boom.SystemMonitor.svg"
+          XDG_DATA_HOME="$data_home" ./install-linux.sh --uninstall
+          test ! -e "$data_home/applications/com.boom.SystemMonitor.desktop"

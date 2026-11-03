@@ -44,7 +44,7 @@ from boom_test_workflow import TestSessions, test_action_for_shortcut, test_acti
 
 
 ROOT = Path(__file__).resolve().parent
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 UNAVAILABLE = "Indisponível"
 TRAY_STARTUP_RETRY_INTERVAL_MS = 500
 TRAY_STARTUP_MAX_ATTEMPTS = 20

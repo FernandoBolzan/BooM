@@ -19,7 +19,7 @@ import boom_performance
 
 class FormatTests(unittest.TestCase):
     def test_release_version_is_declared(self):
-        self.assertEqual(boom.__version__, "0.2.0")
+        self.assertEqual(boom.__version__, "0.2.1")
 
     def test_version_command_prints_release_version(self):
         output = io.StringIO()
@@ -27,7 +27,7 @@ class FormatTests(unittest.TestCase):
             with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
                 boom.main()
         self.assertEqual(result.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "BooM 0.2.0")
+        self.assertEqual(output.getvalue().strip(), "BooM 0.2.1")
 
     def test_byte_units_include_mb_and_gb(self):
         self.assertEqual(boom.format_bytes(10 * 1024**2), "10.0 MB")

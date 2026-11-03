@@ -5,6 +5,7 @@
 - Aplicação local em Python 3.10+, sem serviço de rede ou instalação de dependências Python.
 - `boom.py` implementa a janela GTK 3, o modo de terminal `curses`, o inventário local e as opções CLI.
 - `start-linux.sh` inicia a aplicação. Com display e PyGObject disponíveis, abre a janela GTK; em um terminal sem display, abre o modo interativo.
+- `install-linux.sh` instala ou remove um lançador `.desktop` e o ícone do BooM no diretório de dados XDG do usuário; não exige elevação. O atalho inicia a janela e oferece uma ação secundária para executar somente na bandeja.
 - PyGObject/GTK 3 é opcional para o modo de terminal e necessário para a janela.
 
 ## Leituras do Linux

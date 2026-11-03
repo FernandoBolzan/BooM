@@ -4,11 +4,11 @@
 
 [![CI](https://github.com/FernandoBolzan/BooM/actions/workflows/tests.yml/badge.svg)](https://github.com/FernandoBolzan/BooM/actions/workflows/tests.yml)
 [![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-green.svg)](LICENSE)
-[![Versão](https://img.shields.io/badge/vers%C3%A3o-0.2.0-blue.svg)](CHANGELOG.md)
+[![Versão](https://img.shields.io/badge/vers%C3%A3o-0.2.1-blue.svg)](CHANGELOG.md)
 
 O BooM reúne informações do computador e ferramentas básicas de manutenção em uma aplicação Linux. A organização das áreas foi inspirada no [Reset Explode](https://github.com/GustavoReset/ResetExplode); a implementação deste projeto é própria e não reutiliza arquivos de código daquele repositório.
 
-> **Versão 0.2.0:** expansão de telemetria, diagnóstico e ferramentas locais. Os campos exibidos dependem do hardware, do driver, das permissões e dos serviços disponíveis na distribuição.
+> **Versão 0.2.1:** expansão de telemetria, diagnóstico e ferramentas locais. Os campos exibidos dependem do hardware, do driver, das permissões e dos serviços disponíveis na distribuição.
 
 ## Recursos
 
@@ -56,8 +56,11 @@ No Pop!_OS, Ubuntu ou Debian, clone o projeto e inicie o BooM:
 ```bash
 git clone https://github.com/FernandoBolzan/BooM.git
 cd BooM
+./install-linux.sh
 ./start-linux.sh
 ```
+
+O instalador cria, sem `sudo`, um lançador chamado **BooM** no menu de aplicativos do usuário e instala o ícone. Depois, você também pode abrir o BooM pela busca do Pop!_OS. Para remover somente o lançador e o ícone instalados pelo BooM, execute `./install-linux.sh --uninstall`.
 
 Para a janela e o ícone da bandeja, instale GTK 3 e Ayatana AppIndicator se a distribuição ainda não os fornecer:
 

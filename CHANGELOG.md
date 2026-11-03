@@ -7,6 +7,18 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 Sem mudanças publicadas.
 
+## [0.2.1] - 2026-11-02
+
+Pequena atualização de instalação e integração com a busca de aplicativos Linux.
+
+### Adicionado
+
+- `install-linux.sh` instala e remove, sem privilégios administrativos, o lançador
+  **BooM** e seu ícone para o usuário atual.
+- O lançador oferece abertura normal da janela e uma ação para iniciar o
+  monitoramento oculto na bandeja.
+- A CI valida a instalação e remoção do `.desktop` em um diretório temporário.
+
 ## [0.2.0] - 2026-11-02
 
 Expansão do BooM para monitoramento detalhado, diagnóstico local e testes com
@@ -100,6 +112,7 @@ Primeira versão pública do BooM para Linux.
 - A interação visual da bandeja ainda não foi verificada em todos os ambientes
   de desktop compatíveis.
 
-[Unreleased]: https://github.com/FernandoBolzan/BooM/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/FernandoBolzan/BooM/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/FernandoBolzan/BooM/tree/v0.2.1
 [0.2.0]: https://github.com/FernandoBolzan/BooM/tree/v0.2.0
 [0.1.0]: https://github.com/FernandoBolzan/BooM/tree/v0.1.0
