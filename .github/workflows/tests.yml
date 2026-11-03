@@ -23,7 +23,7 @@ jobs:
             gir1.2-gtk-3.0 \
             python3-gi
       - name: Compile Python files
-        run: /usr/bin/python3 -m py_compile boom.py boom_performance.py boom_local_ai.py boom_disk_benchmark.py boom_test_workflow.py tests/test_boom.py tests/test_local_ai.py tests/test_disk_benchmark.py
+        run: /usr/bin/python3 -m py_compile boom.py boom_performance.py boom_local_ai.py boom_disk_benchmark.py boom_sysbench.py boom_test_workflow.py tests/test_boom.py tests/test_local_ai.py tests/test_disk_benchmark.py tests/test_sysbench.py
       - name: Run tests
         run: /usr/bin/python3 -m unittest discover -s tests -v
       - name: Check CLI and snapshot

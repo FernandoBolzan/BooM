@@ -134,6 +134,8 @@ class SharedTestWorkflowTests(unittest.TestCase):
         self.assertEqual(len({action.shortcut for action in TEST_ACTIONS}), len(TEST_ACTIONS))
         self.assertEqual(test_action_for_shortcut("b").kind, "disk")
         self.assertIn("B disco", test_action_legend())
+        self.assertEqual(test_action_for_shortcut("a").kind, "cpu-benchmark")
+        self.assertEqual(test_action_for_shortcut("e").kind, "memory-benchmark")
 
     def test_coordinator_allows_only_one_active_test_and_routes_cancel(self):
         class FakeSession:
@@ -162,13 +164,20 @@ class SharedTestWorkflowTests(unittest.TestCase):
 
         stress = FakeSession()
         disk_session = FakeSession()
-        coordinator = TestSessions(stress, disk_session)
+        benchmark = FakeSession()
+        coordinator = TestSessions(stress, disk_session, benchmark)
         self.assertEqual(coordinator.start_stress("cpu"), "started")
         with self.assertRaisesRegex(RuntimeError, "Já existe"):
             coordinator.start_disk("/tmp")
+        with self.assertRaisesRegex(RuntimeError, "Já existe"):
+            coordinator.start_benchmark("cpu-benchmark", None)
         coordinator.cancel()
         self.assertTrue(stress.cancelled)
         self.assertFalse(disk_session.cancelled)
+        self.assertFalse(benchmark.cancelled)
+        self.assertEqual(coordinator.start_benchmark("cpu-benchmark", None), "started")
+        coordinator.cancel()
+        self.assertTrue(benchmark.cancelled)
         coordinator.stop_and_wait()
         self.assertTrue(stress.stopped)
         self.assertTrue(disk_session.stopped)

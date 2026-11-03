@@ -19,7 +19,7 @@ import boom_performance
 
 class FormatTests(unittest.TestCase):
     def test_release_version_is_declared(self):
-        self.assertEqual(boom.__version__, "0.2.1")
+        self.assertEqual(boom.__version__, "0.2.2")
 
     def test_version_command_prints_release_version(self):
         output = io.StringIO()
@@ -27,7 +27,7 @@ class FormatTests(unittest.TestCase):
             with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
                 boom.main()
         self.assertEqual(result.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "BooM 0.2.1")
+        self.assertEqual(output.getvalue().strip(), "BooM 0.2.2")
 
     def test_byte_units_include_mb_and_gb(self):
         self.assertEqual(boom.format_bytes(10 * 1024**2), "10.0 MB")
@@ -161,6 +161,7 @@ class FirmwareTests(unittest.TestCase):
         ), patch("boom.shutil.which", return_value=None):
             packages = {item["package"] for item in boom.optional_tool_status()}
         self.assertIn("fwupd", packages)
+        self.assertIn("sysbench", packages)
 
 
 class PerformanceHistoryContinuationTests(unittest.TestCase):
@@ -526,6 +527,7 @@ class SensorAndStressTests(unittest.TestCase):
             "ping": "/usr/bin/ping",
             "apt-get": "/usr/bin/apt-get",
             "pkexec": "/usr/bin/pkexec",
+            "sysbench": "/usr/bin/sysbench",
             "fio": "/usr/bin/fio",
             "mangohud": "/usr/bin/mangohud",
             "gamemoderun": "/usr/bin/gamemoderun",

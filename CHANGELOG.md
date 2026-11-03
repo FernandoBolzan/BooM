@@ -5,8 +5,11 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-03
+
 ### Adicionado
 
+- **Testes** oferece benchmarks opcionais de CPU e RAM via `sysbench`: CPU usa até quatro threads por 10 s; RAM faz leitura e escrita sequenciais por 5 s cada, com buffer privado proporcional à memória disponível. Ambos exigem sensor térmico da CPU, confirmação, cancelamento e parada automática.
 - **Programas** descobre jogos completos nos manifestos das bibliotecas Steam locais, abre o jogo selecionado pelo URI do Steam e fornece opções copiáveis para MangoHud e GameMode. A leitura é local; o BooM não modifica opções da conta/jogo, instala jogos ou inventa medições de FPS.
 - **Programas** desinstala aplicativos identificados por APT ou Flatpak após
   confirmação; APT purga o pacote e bloqueia remoções de outros pacotes, e
@@ -130,7 +133,8 @@ Primeira versão pública do BooM para Linux.
 - A interação visual da bandeja ainda não foi verificada em todos os ambientes
   de desktop compatíveis.
 
-[Unreleased]: https://github.com/FernandoBolzan/BooM/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/FernandoBolzan/BooM/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/FernandoBolzan/BooM/tree/v0.2.2
 [0.2.1]: https://github.com/FernandoBolzan/BooM/tree/v0.2.1
 [0.2.0]: https://github.com/FernandoBolzan/BooM/tree/v0.2.0
 [0.1.0]: https://github.com/FernandoBolzan/BooM/tree/v0.1.0

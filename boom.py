@@ -40,6 +40,16 @@ from boom_disk_benchmark import (
     DiskBenchmarkSession,
     disk_benchmark_readiness,
 )
+from boom_sysbench import (
+    SYSBENCH_ABORT_TEMP_C,
+    SYSBENCH_CPU_DURATION_SECONDS,
+    SYSBENCH_MEMORY_MAX_BUFFER_BYTES,
+    SYSBENCH_MEMORY_MIN_AVAILABLE_BYTES,
+    SYSBENCH_MEMORY_PASS_SECONDS,
+    SYSBENCH_PRECHECK_TEMP_C,
+    SysbenchBenchmarkSession,
+    sysbench_benchmark_readiness,
+)
 from boom_test_workflow import TestSessions, test_action_for_shortcut, test_action_legend
 from boom_games import (
     STEAM_LAUNCH_OPTIONS,
@@ -50,7 +60,7 @@ from boom_games import (
 
 
 ROOT = Path(__file__).resolve().parent
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 UNAVAILABLE = "Indisponível"
 TRAY_STARTUP_RETRY_INTERVAL_MS = 500
 TRAY_STARTUP_MAX_ATTEMPTS = 20
@@ -88,7 +98,7 @@ NAVIGATION_DESCRIPTIONS = (
     "Uso de recursos e encerramento normal de processos.",
     "Aplicativos gráficos instalados e seus lançadores Linux.",
     "Programas configurados para iniciar junto com sua sessão.",
-    "Testes controlados de CPU, RAM, GPU e armazenamento com cancelamento.",
+    "Cargas e benchmarks controlados de CPU, RAM, GPU e armazenamento.",
 )
 NAVIGATION_GROUPS = (
     ("Monitorar", (PAGE_OVERVIEW, PAGE_SYSTEM, PAGE_MEMORY, PAGE_GRAPHICS, PAGE_DISKS, PAGE_NETWORK)),
@@ -125,6 +135,7 @@ OPTIONAL_TOOL_PACKAGES = (
     ("pkexec", "pkexec"),
     ("ping", "iputils-ping"),
     ("stress-ng", "stress-ng"),
+    ("sysbench", "sysbench"),
     ("fio", "fio"),
     ("mangohud", "mangohud"),
     ("gamemoderun", "gamemode"),
@@ -1657,6 +1668,14 @@ def temperature_info(readings: list[dict[str, Any]] | None = None) -> list[dict[
 def cpu_temperature_readings(temperatures: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cpu_sensor = re.compile(r"(?:k10temp|coretemp|zenpower|\bcpu\b|tctl|tdie|package id)", re.I)
     return [item for item in temperatures if cpu_sensor.search(str(item.get("name", "")))]
+
+
+def sysbench_temperature_snapshot() -> dict[str, list[dict[str, Any]]]:
+    temperatures = temperature_info()
+    return {
+        "cpu_temperatures": cpu_temperature_readings(temperatures),
+        "temperatures": temperatures,
+    }
 
 
 def stress_test_readiness(
@@ -3559,7 +3578,8 @@ def curses_text(window: Any, y: int, x: int, text: str, width: int | None = None
 def run_tui() -> None:
     stress_session = StressTestSession()
     disk_session = DiskBenchmarkSession()
-    test_sessions = TestSessions(stress_session, disk_session)
+    benchmark_session = SysbenchBenchmarkSession(sysbench_temperature_snapshot)
+    test_sessions = TestSessions(stress_session, disk_session, benchmark_session)
 
     def main(stdscr: Any) -> None:
         curses.curs_set(0)
@@ -3738,6 +3758,50 @@ def run_tui() -> None:
                 return
             try:
                 stress_test_command(kind, duration, 1, available, gpu_device=readiness.get("gpu_device"))
+            except (RuntimeError, ValueError) as exc:
+                status = str(exc)
+
+        def confirm_sysbench_benchmark(kind: str) -> None:
+            nonlocal status
+            if test_sessions.is_active():
+                status = "Encerre o teste atual antes de iniciar outro benchmark."
+                return
+            if not shutil.which("sysbench"):
+                confirm_optional_tool_install()
+                return
+            available = memory_info().get("available")
+            readiness = sysbench_benchmark_readiness(
+                kind,
+                available,
+                {
+                    "cpu_temperatures": cpu_temperature_readings(data.get("temperatures", [])),
+                    "temperatures": data.get("temperatures", []),
+                },
+                executable=shutil.which("sysbench"),
+            )
+            if not readiness["ready"]:
+                status = readiness["message"]
+                return
+            if kind == "cpu-benchmark":
+                details = (
+                    f"sysbench CPU · {SYSBENCH_CPU_DURATION_SECONDS} s · até {readiness['threads']} threads · "
+                    f"parada automática a {SYSBENCH_ABORT_TEMP_C:.0f} °C ou se a temperatura da CPU ficar indisponível"
+                )
+            else:
+                buffer_bytes = int(readiness["buffer_bytes"])
+                details = (
+                    f"Leitura e escrita sequenciais · {SYSBENCH_MEMORY_PASS_SECONDS} s cada · "
+                    f"buffer privado de {format_bytes(buffer_bytes)} (máximo {format_bytes(SYSBENCH_MEMORY_MAX_BUFFER_BYTES)}; "
+                    f"no máximo 1/16 da RAM disponível) · sem arquivos ou acesso bruto"
+                )
+            prompt = f"Iniciar benchmark de {'CPU' if kind == 'cpu-benchmark' else 'RAM'}? {details}. [s/N] "
+            curses_text(stdscr, stdscr.getmaxyx()[0] - 2, 2, prompt, width=stdscr.getmaxyx()[1] - 4, attr=curses.color_pair(4))
+            stdscr.refresh()
+            if stdscr.getch() not in (ord("s"), ord("S")):
+                status = "Benchmark cancelado antes de iniciar."
+                return
+            try:
+                status = test_sessions.start_benchmark(kind, available)
             except (RuntimeError, ValueError) as exc:
                 status = str(exc)
                 return
@@ -4191,12 +4255,25 @@ def run_tui() -> None:
                     selected_gpu_index = min(selected_gpu_index, len(gpu_metrics) - 1)
                 selected_gpu = gpu_metrics[selected_gpu_index] if gpu_metrics else None
                 gpu_readiness = stress_test_readiness(readings, "gpu", selected_gpu)
-                active_test = session.get("status") in {"running", "stopping"}
-                active_stress = active_test and session.get("kind") in {"cpu", "memory", "gpu"}
+                active_test = session.get("status") in {"starting", "running", "stopping"}
+                active_stress = active_test and session.get("kind") in {
+                    "cpu", "memory", "gpu", "cpu-benchmark", "memory-benchmark",
+                }
                 cpu_temp = session.get("cpu_celsius") if active_stress else max((item["celsius"] for item in cpu_temps), default=None)
                 gpu_temp = session.get("gpu_celsius") if active_stress and session.get("kind") == "gpu" else (selected_gpu or {}).get("temperature_celsius")
                 all_temp = session.get("current_celsius") if active_stress else gpu_readiness.get("current_celsius") if selected_gpu else readiness.get("current_celsius")
                 memory_available = (data.get("memory") or {}).get("available")
+                sysbench_executable = shutil.which("sysbench")
+                benchmark_cpu = sysbench_benchmark_readiness(
+                    "cpu-benchmark", memory_available,
+                    {"cpu_temperatures": cpu_temps, "temperatures": readings},
+                    executable=sysbench_executable,
+                )
+                benchmark_memory = sysbench_benchmark_readiness(
+                    "memory-benchmark", memory_available,
+                    {"cpu_temperatures": cpu_temps, "temperatures": readings},
+                    executable=sysbench_executable,
+                )
                 allocation = min((memory_available or 0) // 4, STRESS_TEST_MAX_MEMORY_BYTES)
                 allocation = allocation // (1024**2) * (1024**2)
                 test_rows = [
@@ -4210,16 +4287,23 @@ def run_tui() -> None:
                     f"Benchmark de disco: fio · arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB · leitura/escrita sequencial direta · máximo de {DISK_BENCHMARK_TIMEOUT_SECONDS} s",
                     "O benchmark só grava em arquivo novo na pasta escolhida; o arquivo é removido ao terminar.",
                     "O benchmark de disco ainda não tem parada automática por temperatura.",
-                    "Duração no terminal: 30 s · GTK permite 10, 30, 60 ou 120 s",
+                    "Benchmark CPU/RAM: " + ("sysbench instalado" if sysbench_executable else "sysbench ausente · use I para instalar ferramentas opcionais"),
+                    "CPU: até 4 threads por 10 s. RAM: leitura e escrita, 5 s cada; buffer privado de até 256 MiB e 1/16 da RAM disponível.",
+                    "O benchmark de RAM só começa com pelo menos 512 MiB disponíveis; CPU e RAM param a 85 °C ou se o sensor da CPU falhar.",
+                    "Duração de carga no terminal: 30 s · GTK permite 10, 30, 60 ou 120 s",
                     "Pressione I para instalar ferramentas ausentes (apt + autorização do sistema).",
                     "Estado: " + session.get("message", "Nenhum teste executado."),
                     readiness["message"],
                     "GPU: " + gpu_readiness["message"],
+                    "Benchmark CPU: " + benchmark_cpu["message"],
+                    "Benchmark RAM: " + benchmark_memory["message"],
                     "Atalhos: " + test_action_legend() + " · [/] escolhe GPU · X cancela.",
                 ]
                 for line in test_rows:
                     curses_text(stdscr, y, 2, line, width=width - 4); y += 1
                 if session.get("summary"):
+                    for line in str(session["summary"]).splitlines():
+                        curses_text(stdscr, y, 2, line, width=width - 4); y += 1
                     curses_text(stdscr, y + 1, 2, "Resumo do teste:", attr=curses.color_pair(2) | curses.A_BOLD); y += 2
                     for line in session["summary"].splitlines()[-max(1, height - y - 4):]:
                         curses_text(stdscr, y, 2, line, width=width - 4); y += 1
@@ -4452,6 +4536,8 @@ def run_tui() -> None:
                 action = test_action_for_shortcut(chr(key))
                 if action and action.kind == "disk":
                     confirm_disk_benchmark()
+                elif action and action.kind in {"cpu-benchmark", "memory-benchmark"}:
+                    confirm_sysbench_benchmark(action.kind)
                 elif action:
                     confirm_stress_test(action.kind)
             elif key in (ord("i"), ord("I")) and (
@@ -4530,8 +4616,11 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
         "syncing_autostart": False,
         "stress_session": StressTestSession(),
         "disk_session": DiskBenchmarkSession(),
+        "benchmark_session": SysbenchBenchmarkSession(sysbench_temperature_snapshot),
     }
-    state["test_sessions"] = TestSessions(state["stress_session"], state["disk_session"])
+    state["test_sessions"] = TestSessions(
+        state["stress_session"], state["disk_session"], state["benchmark_session"],
+    )
 
     class BooMWindow(Gtk.ApplicationWindow):
         titles = list(NAVIGATION_PAGES)
@@ -5714,7 +5803,9 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
 
             sensors = self.card("Temperatura e proteção térmica")
             self.add_row(sensors, "Fonte", self.data.get("sensors_status", "lm-sensors / hwmon / sysfs"))
-            active_stress = busy and session.get("kind") in {"cpu", "memory", "gpu"}
+            active_stress = busy and session.get("kind") in {
+                "cpu", "memory", "gpu", "cpu-benchmark", "memory-benchmark",
+            }
             cpu_temperature = session.get("cpu_celsius") if active_stress else readiness.get("cpu_celsius")
             hottest = session.get("current_celsius") if active_stress else gpu_readiness.get("current_celsius") if selected_gpu else readiness.get("current_celsius")
             gpu_temperature = session.get("gpu_celsius") if active_stress and session.get("kind") == "gpu" else (selected_gpu or {}).get("temperature_celsius")
@@ -5733,7 +5824,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 "gpu_readiness": gpu_readiness_value,
             })
 
-            options = self.card("Parâmetros do teste")
+            options = self.card("Testes de carga")
             gpu_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             gpu_label = Gtk.Label(label="Adaptador para teste")
             gpu_label.set_xalign(0)
@@ -5794,11 +5885,6 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 "Carga de RAM",
                 f"1 worker · {format_bytes(memory_bytes)} · até 25% da RAM disponível, limitado a 1 GiB" if memory_bytes else memory_error,
             )
-            self.add_row(
-                options,
-                "Benchmark de disco",
-                f"fio · {DISK_BENCHMARK_SIZE_MIB} MiB · leitura e escrita sequenciais diretas · pasta escolhida · arquivo removido ao terminar",
-            )
             actions = Gtk.Grid()
             actions.set_column_spacing(12)
             actions.set_row_spacing(12)
@@ -5820,20 +5906,6 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             gpu_button.set_tooltip_text(gpu_readiness["message"])
             gpu_button.connect("clicked", self.request_stress_test, "gpu")
             actions.attach(gpu_button, 0, 1, 1, 1)
-            fio_installed = bool(shutil.which("fio"))
-            disk_button = Gtk.Button(label="Benchmark de disco" if fio_installed else "Instalar fio para benchmark")
-            disk_button.get_style_context().add_class("action")
-            disk_button.set_sensitive(not busy)
-            disk_button.set_tooltip_text(
-                f"Escolha uma pasta no volume; grava e lê apenas um arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB."
-                if fio_installed else "fio está ausente; a instalação assistida revisará os pacotes ausentes e pedirá confirmação."
-            )
-            disk_button.connect("clicked", self.request_disk_benchmark)
-            actions.attach(disk_button, 1, 1, 1, 1)
-            cancel_button = Gtk.Button(label="Cancelar teste")
-            cancel_button.set_sensitive(self.test_sessions().is_active())
-            cancel_button.connect("clicked", self.cancel_stress_test)
-            actions.attach(cancel_button, 1, 2, 1, 1)
             options.pack_start(actions, False, False, 4)
             self.add_card(options)
             self.stress_widgets.update({
@@ -5842,10 +5914,68 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 "cpu_button": cpu_button,
                 "memory_button": memory_button,
                 "gpu_button": gpu_button,
-                "disk_button": disk_button,
                 "gpu_selector": gpu_selector,
-                "cancel_button": cancel_button,
             })
+
+            sysbench_executable = shutil.which("sysbench")
+            benchmark_thermal = {
+                "cpu_temperatures": cpu_temperature_readings(self.data.get("temperatures", [])),
+                "temperatures": self.data.get("temperatures", []),
+            }
+            benchmark_cpu = sysbench_benchmark_readiness(
+                "cpu-benchmark", available_memory, benchmark_thermal, executable=sysbench_executable,
+            )
+            benchmark_memory = sysbench_benchmark_readiness(
+                "memory-benchmark", available_memory, benchmark_thermal, executable=sysbench_executable,
+            )
+            benchmarks = self.card("Benchmarks CPU, RAM e disco")
+            self.add_row(
+                benchmarks,
+                "CPU",
+                f"sysbench · {SYSBENCH_CPU_DURATION_SECONDS} s · até 4 threads · eventos por segundo",
+            )
+            self.add_row(
+                benchmarks,
+                "RAM",
+                f"Leitura e escrita · {SYSBENCH_MEMORY_PASS_SECONDS} s cada · buffer privado até 256 MiB e 1/16 da RAM disponível · mínimo de {format_bytes(SYSBENCH_MEMORY_MIN_AVAILABLE_BYTES)} livres",
+            )
+            self.add_row(
+                benchmarks,
+                "Disco",
+                f"fio · {DISK_BENCHMARK_SIZE_MIB} MiB sequenciais · arquivo temporário novo na pasta escolhida, removido ao terminar",
+            )
+            benchmark_actions = Gtk.Grid()
+            benchmark_actions.set_column_spacing(12)
+            benchmark_actions.set_row_spacing(12)
+            benchmark_actions.set_column_homogeneous(True)
+            cpu_benchmark_button = Gtk.Button(label="Benchmark CPU")
+            cpu_benchmark_button.get_style_context().add_class("action")
+            cpu_benchmark_button.set_sensitive(not busy and bool(sysbench_executable) and benchmark_cpu["ready"])
+            cpu_benchmark_button.set_tooltip_text(
+                benchmark_cpu["message"] if sysbench_executable else "sysbench está ausente; instale as ferramentas opcionais para medir CPU e RAM."
+            )
+            cpu_benchmark_button.connect("clicked", self.request_sysbench_benchmark, "cpu-benchmark")
+            benchmark_actions.attach(cpu_benchmark_button, 0, 0, 1, 1)
+            memory_benchmark_button = Gtk.Button(label="Benchmark RAM")
+            memory_benchmark_button.get_style_context().add_class("action")
+            memory_benchmark_button.set_sensitive(not busy and bool(sysbench_executable) and benchmark_memory["ready"])
+            memory_benchmark_button.set_tooltip_text(
+                benchmark_memory["message"] if sysbench_executable else "sysbench está ausente; instale as ferramentas opcionais para medir CPU e RAM."
+            )
+            memory_benchmark_button.connect("clicked", self.request_sysbench_benchmark, "memory-benchmark")
+            benchmark_actions.attach(memory_benchmark_button, 1, 0, 1, 1)
+            fio_installed = bool(shutil.which("fio"))
+            disk_button = Gtk.Button(label="Benchmark disco" if fio_installed else "Instalar fio")
+            disk_button.get_style_context().add_class("action")
+            disk_button.set_sensitive(not busy)
+            disk_button.set_tooltip_text(
+                f"Escolha uma pasta no volume; grava e lê apenas um arquivo temporário de {DISK_BENCHMARK_SIZE_MIB} MiB."
+                if fio_installed else "fio está ausente; a instalação assistida revisará os pacotes ausentes e pedirá confirmação."
+            )
+            disk_button.connect("clicked", self.request_disk_benchmark)
+            benchmark_actions.attach(disk_button, 0, 1, 1, 1)
+            benchmarks.pack_start(benchmark_actions, False, False, 4)
+            self.add_card(benchmarks)
 
             run_card = self.card("Resultado do teste")
             status_label = Gtk.Label(label=session.get("message", "Nenhum teste executado."))
@@ -5853,7 +5983,13 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             status_label.set_line_wrap(True)
             status_label.set_selectable(True)
             status_label.get_style_context().add_class("body-copy")
-            run_card.pack_start(status_label, False, False, 0)
+            status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            status_row.pack_start(status_label, True, True, 0)
+            cancel_button = Gtk.Button(label="Cancelar")
+            cancel_button.set_sensitive(session.get("status") in {"starting", "running", "stopping"})
+            cancel_button.connect("clicked", self.cancel_stress_test)
+            status_row.pack_end(cancel_button, False, False, 0)
+            run_card.pack_start(status_row, False, False, 0)
             progress = Gtk.ProgressBar()
             progress.set_fraction(float(session.get("elapsed_seconds", 0)) / max(1, session.get("duration_seconds", 1)) if session.get("status") == "running" else 1.0 if session.get("status") == "completed" else 0.0)
             run_card.pack_start(progress, False, False, 0)
@@ -5864,15 +6000,19 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 summary.set_selectable(True)
                 summary.get_style_context().add_class("muted")
                 run_card.pack_start(summary, False, False, 0)
-            self.stress_widgets.update({"status": status_label, "progress": progress})
+            self.stress_widgets.update({
+                "status": status_label,
+                "progress": progress,
+                "cancel_button": cancel_button,
+            })
             self.add_card(run_card)
 
             note = self.card("Escopo e segurança")
             for item in optional_tool_status():
                 state_label = "instalado" if item["installed"] else f"ausente · pacote {item['package']}"
                 self.add_row(note, item["command"], state_label)
-            self.add_row(note, "Execução", "Sem privilégios; um teste por vez. O benchmark de disco usa arquivo temporário de 128 MiB e termina em até 120 s.")
-            self.add_row(note, "Parada automática", f"Cargas CPU/RAM/GPU param a 85 °C ou se um sensor necessário falhar. Disco: limite de {DISK_BENCHMARK_TIMEOUT_SECONDS} s; sem watchdog térmico nesta fase.")
+            self.add_row(note, "Execução", "Sem privilégios; um teste por vez. Benchmarks sysbench de CPU/RAM duram até 10 s; o de disco usa arquivo temporário de 128 MiB e termina em até 120 s.")
+            self.add_row(note, "Parada automática", f"Cargas e benchmarks CPU/RAM param a {SYSBENCH_ABORT_TEMP_C:.0f} °C ou se o sensor necessário falhar. Disco: limite de {DISK_BENCHMARK_TIMEOUT_SECONDS} s; sem watchdog térmico nesta fase.")
             self.add_row(note, "Cancelamento", "O botão encerra o teste; arquivos temporários só são removidos após a confirmação de que o processo parou.")
             if missing_optional_packages():
                 install_button = Gtk.Button(label="Instalar ferramentas ausentes")
@@ -5991,6 +6131,74 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
 
             threading.Thread(target=worker, name="boom-stress-start", daemon=True).start()
 
+        def request_sysbench_benchmark(self, _button: Any, kind: str) -> None:
+            if self.stress_starting or self.optional_installing or self.test_sessions().is_active():
+                return
+            if kind not in {"cpu-benchmark", "memory-benchmark"}:
+                self.refresh_state.set_text("Tipo de benchmark desconhecido.")
+                return
+            if not shutil.which("sysbench"):
+                self.request_optional_install(_button)
+                return
+            available_memory = memory_info().get("available")
+            temperatures = self.data.get("temperatures", [])
+            readiness = sysbench_benchmark_readiness(
+                kind,
+                available_memory,
+                {
+                    "cpu_temperatures": cpu_temperature_readings(temperatures),
+                    "temperatures": temperatures,
+                },
+                executable=shutil.which("sysbench"),
+            )
+            if not readiness["ready"]:
+                self.refresh_state.set_text(readiness["message"])
+                self.render_page()
+                return
+            if kind == "cpu-benchmark":
+                details = (
+                    f"sysbench calcula eventos por segundo durante {SYSBENCH_CPU_DURATION_SECONDS} s, "
+                    f"com {readiness['threads']} threads. Isso aplica carga real à CPU."
+                )
+                benchmark_label = "CPU"
+            else:
+                buffer_bytes = int(readiness["buffer_bytes"])
+                details = (
+                    f"sysbench mede leitura e escrita sequenciais por {SYSBENCH_MEMORY_PASS_SECONDS} s cada, "
+                    f"com buffer privado de {format_bytes(buffer_bytes)}. O buffer não passa de 1/16 da RAM "
+                    "disponível nem de 256 MiB; nenhum arquivo ou dispositivo é alterado."
+                )
+                benchmark_label = "RAM"
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=Gtk.DialogFlags.MODAL,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.CANCEL,
+                text=f"Iniciar benchmark de {benchmark_label}?",
+            )
+            dialog.format_secondary_text(
+                f"{details} Começa com os sensores abaixo de {SYSBENCH_PRECHECK_TEMP_C:.0f} °C e para a "
+                f"{SYSBENCH_ABORT_TEMP_C:.0f} °C ou se a leitura térmica da CPU ficar indisponível."
+            )
+            dialog.add_button("Iniciar benchmark", Gtk.ResponseType.ACCEPT)
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.ACCEPT:
+                self.refresh_state.set_text("Benchmark cancelado antes de iniciar.")
+                return
+            self.stress_starting = True
+            self.refresh_state.set_text("Conferindo sensores térmicos antes do benchmark…")
+            self.render_page()
+
+            def worker() -> None:
+                try:
+                    message = self.test_sessions().start_benchmark(kind, available_memory)
+                    GLib.idle_add(self.finish_stress_start, message, None)
+                except (RuntimeError, ValueError) as exc:
+                    GLib.idle_add(self.finish_stress_start, "", str(exc))
+
+            threading.Thread(target=worker, name="boom-sysbench-start", daemon=True).start()
+
         def request_disk_benchmark(self, _button: Any) -> None:
             if self.stress_starting or self.optional_installing or self.test_sessions().is_active():
                 return
@@ -6057,7 +6265,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             state_message = error or message
             self.refresh_state.set_text(state_message)
             session = self.test_sessions().snapshot()
-            if session.get("status") in {"running", "stopping"} and self.stress_poll_source is None:
+            if session.get("status") in {"starting", "running", "stopping"} and self.stress_poll_source is None:
                 self.stress_poll_source = GLib.timeout_add_seconds(1, self.poll_stress_test)
             if self.page == PAGE_TESTS:
                 self.render_page()
@@ -6076,8 +6284,8 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                     duration = max(1, int(session.get("duration_seconds", 1)))
                     progress.set_fraction(min(1.0, float(session.get("elapsed_seconds", 0)) / duration) if session.get("status") == "running" else 1.0 if session.get("status") == "completed" else 0.0)
                 if widgets.get("cancel_button") is not None:
-                    widgets["cancel_button"].set_sensitive(session.get("status") in {"running", "stopping"})
-            if session.get("status") in {"running", "stopping"}:
+                    widgets["cancel_button"].set_sensitive(session.get("status") in {"starting", "running", "stopping"})
+            if session.get("status") in {"starting", "running", "stopping"}:
                 return True
             self.stress_poll_source = None
             self.refresh_state.set_text(session.get("message", "Teste de carga finalizado."))
