@@ -18,6 +18,27 @@ import boom_performance
 
 
 class FormatTests(unittest.TestCase):
+    def test_manager_state_includes_bottles_and_combines_its_programs(self):
+        steam = {"state": "empty", "games": []}
+        lutris = {"state": "empty", "games": []}
+        heroic = {"state": "empty", "games": []}
+        bottles = {"state": "ready", "games": [{"name": "Windows Game"}]}
+        combined = [{"name": "Windows Game", "launcher": "Bottles"}]
+        with patch.object(boom, "process_list", return_value=[]), patch.object(
+            boom, "desktop_application_list", return_value=[],
+        ), patch.object(boom, "autostart_list", return_value=[]), patch.object(
+            boom, "steam_library_info", return_value=steam,
+        ), patch.object(boom, "lutris_library_info", return_value=lutris), patch.object(
+            boom, "heroic_library_info", return_value=heroic,
+        ), patch.object(boom, "bottles_library_info", return_value=bottles), patch.object(
+            boom, "installed_game_list", return_value=combined,
+        ) as installed_games:
+            state = boom.collect_manager_state()
+
+        self.assertIs(state["bottles"], bottles)
+        self.assertEqual(state["games"], combined)
+        installed_games.assert_called_once_with(steam, lutris, heroic, bottles)
+
     def test_release_version_is_declared(self):
         self.assertEqual(boom.__version__, "0.2.2")
 
@@ -162,6 +183,17 @@ class FirmwareTests(unittest.TestCase):
             packages = {item["package"] for item in boom.optional_tool_status()}
         self.assertIn("fwupd", packages)
         self.assertIn("sysbench", packages)
+
+    def test_missing_pyyaml_is_offered_for_bottles_library_discovery(self):
+        with patch("boom.intel_i915_adapter_present", return_value=False), patch(
+            "boom.power_profile_control_supported", return_value=False
+        ), patch("boom.gtk3_runtime_available", return_value=True), patch(
+            "boom.appindicator_runtime_available", return_value=True
+        ), patch("boom.shutil.which", return_value="/usr/bin/tool"), patch(
+            "boom.importlib.util.find_spec", return_value=None
+        ):
+            packages = {item["package"] for item in boom.optional_tool_status()}
+        self.assertIn("python3-yaml", packages)
 
 
 class PerformanceHistoryContinuationTests(unittest.TestCase):

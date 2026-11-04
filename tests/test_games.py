@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -350,6 +351,160 @@ class HeroicLibraryTests(unittest.TestCase):
         )
         self.assertNotIn("shell", popen.call_args.kwargs)
         self.assertFalse(boom_games.launch_heroic_game("app&id", "nile")["ok"])
+
+
+class BottlesLibraryTests(unittest.TestCase):
+    def test_library_reads_registered_programs_without_running_bottles_cli(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            data_home = home / "xdg-data"
+            bottle_dir = data_home / "bottles/bottles/Gaming Bottle"
+            bottle_dir.mkdir(parents=True)
+            (bottle_dir / "bottle.yml").write_text(
+                "Name: Gaming Bottle\n"
+                "External_Programs:\n"
+                "  app-one:\n"
+                "    name: A Game\n"
+                "    id: program-123\n"
+                "  old-app:\n"
+                "    name: Removed Game\n"
+                "    removed: true\n",
+                encoding="utf-8",
+            )
+            with patch(
+                "boom_games.shutil.which",
+                side_effect=lambda name: "/usr/bin/bottles-cli" if name == "bottles-cli" else None,
+            ), patch("boom_games.subprocess.run", side_effect=AssertionError("inventory must not invoke CLI")):
+                result = boom_games.bottles_library_info(home=home, data_home=data_home)
+
+        self.assertEqual(result["state"], "ready")
+        self.assertEqual(result["bottle_count"], 1)
+        self.assertEqual(result["games"], [{
+            "name": "A Game",
+            "game_id": "A Game",
+            "bottle": "Gaming Bottle",
+            "runner": "Gaming Bottle",
+            "backend": "native",
+            "store": "Gaming Bottle",
+            "program_id": "",
+            "use_program_id": False,
+        }])
+        self.assertIn("leitura somente", result["source"])
+
+    def test_custom_bottle_path_is_read_from_placeholder_and_duplicate_names_hidden(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            data_home = home / "xdg-data"
+            bottle_dir = data_home / "bottles/bottles/Portable"
+            bottle_dir.mkdir(parents=True)
+            custom_path = home / "mounted/portable"
+            custom_path.mkdir(parents=True)
+            (bottle_dir / "placeholder.yml").write_text(
+                f"Path: {custom_path}\n", encoding="utf-8",
+            )
+            (custom_path / "bottle.yml").write_text(
+                "Name: Portable\nExternal_Programs:\n"
+                "  first:\n    name: Same Name\n    id: one\n"
+                "  second:\n    name: Same Name\n    id: two\n",
+                encoding="utf-8",
+            )
+            with patch(
+                "boom_games._bottles_cli_backends",
+                return_value=([{
+                    "kind": "native", "label": "Nativo", "prefix": "/usr/bin/bottles-cli",
+                    "root": str(data_home / "bottles/bottles"),
+                }], 0),
+            ):
+                result = boom_games.bottles_library_info(home=home, data_home=data_home)
+
+        self.assertEqual(result["state"], "error")
+        self.assertEqual(result["games"], [])
+        self.assertIn("duplicados", result["message"])
+
+    def test_bottles_backend_detection_uses_native_and_flatpak_without_installing(self):
+        def which(name: str) -> str | None:
+            return {"bottles-cli": None, "flatpak": "/usr/bin/flatpak"}.get(name)
+
+        completed = subprocess.CompletedProcess(
+            ["flatpak", "list"], 0,
+            "org.example.Other\ncom.usebottles.bottles\n",
+            "",
+        )
+        with patch("boom_games.shutil.which", side_effect=which), patch(
+            "boom_games.subprocess.run", return_value=completed,
+        ) as run:
+            backends, errors = boom_games._bottles_cli_backends()
+
+        self.assertEqual(errors, 0)
+        self.assertEqual(len(backends), 1)
+        self.assertEqual(backends[0]["kind"], "flatpak")
+        self.assertEqual(backends[0]["label"], "Flatpak")
+        self.assertEqual(backends[0]["prefix"], "/usr/bin/flatpak")
+        self.assertEqual(
+            Path(backends[0]["root"]),
+            Path.home() / ".var/app/com.usebottles.bottles/data/bottles/bottles",
+        )
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/flatpak", "list", "--app", "--columns=application"],
+        )
+
+    def test_bottles_missing_and_failed_flatpak_detection_have_explicit_states(self):
+        with patch("boom_games._bottles_cli_backends", return_value=([], 0)):
+            missing = boom_games.bottles_library_info()
+        with patch("boom_games._bottles_cli_backends", return_value=([], 1)):
+            failed = boom_games.bottles_library_info()
+        self.assertEqual(missing["state"], "not-installed")
+        self.assertEqual(failed["state"], "error")
+        self.assertIn("verificar as instalações", failed["message"])
+
+    def test_bottles_launch_uses_fixed_argv_without_a_shell(self):
+        with patch("boom_games.shutil.which", return_value="/usr/bin/bottles-cli"), patch(
+            "boom_games.subprocess.Popen", return_value=object(),
+        ) as popen:
+            result = boom_games.launch_bottles_program("My Game", "My Bottle", "native")
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            popen.call_args.args[0],
+            ["/usr/bin/bottles-cli", "run", "--bottle=My Bottle", "--program=My Game"],
+        )
+        self.assertNotIn("shell", popen.call_args.kwargs)
+
+        with patch("boom_games.shutil.which", return_value="/usr/bin/flatpak"), patch(
+            "boom_games.subprocess.Popen", return_value=object(),
+        ) as popen:
+            result = boom_games.launch_bottles_program("My Game", "My Bottle", "flatpak")
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            popen.call_args.args[0],
+            [
+                "/usr/bin/flatpak", "run", "--command=bottles-cli", "com.usebottles.bottles",
+                "run", "--bottle=My Bottle", "--program=My Game",
+            ],
+        )
+        self.assertNotIn("shell", popen.call_args.kwargs)
+
+    def test_combined_game_list_dispatches_bottles_programs_to_selected_bottle(self):
+        games = boom_games.installed_game_list(
+            {"games": []},
+            {"games": []},
+            {"games": []},
+            {"games": [{
+                "name": "Windows Game", "bottle": "Gaming", "backend": "flatpak",
+                "program_id": "", "use_program_id": False,
+            }]},
+        )
+        self.assertEqual(games, [{
+            "name": "Windows Game", "launcher": "Bottles", "store": "Gaming · flatpak",
+            "game_id": "Windows Game", "runner": "Gaming", "backend": "flatpak",
+            "program_id": "", "use_program_id": False,
+        }])
+        with patch("boom_games.launch_bottles_program", return_value={"ok": True, "message": "ok"}) as launch:
+            result = boom_games.launch_installed_game(
+                "Bottles", "Windows Game", "Gaming", "flatpak", "", False,
+            )
+        self.assertTrue(result["ok"])
+        launch.assert_called_once_with("Windows Game", "Gaming", "flatpak", "", False)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,10 @@ _STEAM_ROOT_SUFFIXES = (
 )
 _LUTRIS_FLATPAK_APP_ID = "net.lutris.Lutris"
 _HEROIC_FLATPAK_APP_ID = "com.heroicgameslauncher.hgl"
+_BOTTLES_FLATPAK_APP_ID = "com.usebottles.bottles"
 _HEROIC_JSON_MAX_BYTES = 32 * 1024 * 1024
+_BOTTLES_CONFIG_MAX_BYTES = 4 * 1024 * 1024
+_BOTTLES_CLI_TIMEOUT = 5
 _HEROIC_STORES = {
     "legendary": {
         "label": "Epic",
@@ -674,12 +677,278 @@ def launch_heroic_game(app_name: str, runner: str) -> dict[str, Any]:
     return {"ok": True, "message": "Solicitação de abertura enviada ao Heroic."}
 
 
+def _bottles_cli_backends(
+    home: Path | None = None,
+    data_home: Path | None = None,
+) -> tuple[list[dict[str, str]], int]:
+    home = home or Path.home()
+    if data_home is None:
+        configured = os.environ.get("XDG_DATA_HOME")
+        configured_path = Path(configured).expanduser() if configured else None
+        data_home = (
+            configured_path
+            if configured_path and configured_path.is_absolute()
+            else home / ".local/share"
+        )
+    backends: list[dict[str, str]] = []
+    native_cli = shutil.which("bottles-cli")
+    if native_cli:
+        backends.append({
+            "kind": "native",
+            "label": "Nativo",
+            "prefix": native_cli,
+            "root": str(data_home / "bottles/bottles"),
+        })
+
+    flatpak = shutil.which("flatpak")
+    errors = 0
+    if flatpak:
+        try:
+            result = subprocess.run(
+                [flatpak, "list", "--app", "--columns=application"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_BOTTLES_CLI_TIMEOUT,
+                check=False,
+                close_fds=True,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            errors = 1
+        else:
+            if result.returncode != 0:
+                errors = 1
+            elif _BOTTLES_FLATPAK_APP_ID in result.stdout.splitlines():
+                backends.append({
+                    "kind": "flatpak",
+                    "label": "Flatpak",
+                    "prefix": flatpak,
+                    "root": str(
+                        home / ".var/app/com.usebottles.bottles/data/bottles/bottles"
+                    ),
+                })
+    return backends, errors
+
+
+def _read_bottles_yaml(path: Path) -> dict[str, Any]:
+    try:
+        if path.stat().st_size > _BOTTLES_CONFIG_MAX_BYTES:
+            raise ValueError("Um arquivo de configuração do Bottles excedeu 4 MiB.")
+        import yaml
+    except ImportError as exc:
+        raise ValueError(
+            "A leitura segura do Bottles requer PyYAML (pacote python3-yaml)."
+        ) from exc
+    except OSError as exc:
+        raise ValueError("Um arquivo local do Bottles não pôde ser lido.") from exc
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            payload = yaml.safe_load(stream)
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise ValueError("Um arquivo YAML do Bottles está inválido ou ilegível.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Um arquivo YAML do Bottles tem formato desconhecido.")
+    return payload
+
+
+def _bottles_text(value: Any) -> str | None:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value) > 512
+        or any(ord(char) < 32 or 0x7F <= ord(char) <= 0x9F for char in value)
+    ):
+        return None
+    return value
+
+
+def _bottle_config_path(bottle_dir: Path) -> Path:
+    placeholder_path = bottle_dir / "placeholder.yml"
+    if placeholder_path.is_file():
+        placeholder = _read_bottles_yaml(placeholder_path)
+        custom_path = placeholder.get("Path")
+        if not isinstance(custom_path, str) or not custom_path.strip():
+            raise ValueError("O placeholder do Bottles não informa um caminho válido.")
+        target = Path(custom_path).expanduser()
+        if not target.is_absolute():
+            raise ValueError("O caminho customizado do Bottles não é absoluto.")
+        return target / "bottle.yml"
+    return bottle_dir / "bottle.yml"
+
+
+def bottles_library_info(
+    home: Path | None = None,
+    data_home: Path | None = None,
+) -> dict[str, Any]:
+    """Read Bottles bottle.yml files without invoking its mutating inventory CLI."""
+    home = home or Path.home()
+    backends, errors = _bottles_cli_backends(home=home, data_home=data_home)
+    if not backends and not errors:
+        return {
+            "state": "not-installed",
+            "message": "Bottles não está instalado (CLI nativa ou Flatpak).",
+            "games": [],
+            "bottle_count": 0,
+            "backend_count": 0,
+            "source": "configuração local do Bottles",
+        }
+
+    programs_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    bottle_count = 0
+    ambiguous = 0
+    for backend in backends:
+        root = Path(backend["root"])
+        try:
+            bottle_dirs = sorted(
+                (
+                    path for path in root.iterdir()
+                    if path.is_dir() and not path.is_symlink()
+                ),
+                key=lambda path: path.name.casefold(),
+            )
+        except FileNotFoundError:
+            bottle_dirs = []
+        except OSError:
+            errors += 1
+            continue
+        configs: list[tuple[str, dict[str, Any]]] = []
+        for bottle_dir in bottle_dirs:
+            try:
+                config = _read_bottles_yaml(_bottle_config_path(bottle_dir))
+            except ValueError:
+                errors += 1
+                continue
+            bottle_name = _bottles_text(config.get("Name"))
+            external_programs = config.get("External_Programs", {})
+            if bottle_name is None or not isinstance(external_programs, dict):
+                errors += 1
+                continue
+            configs.append((bottle_name, external_programs))
+        bottle_count += len(configs)
+
+        bottle_name_counts: dict[str, int] = {}
+        for bottle_name, _programs in configs:
+            bottle_name_counts[bottle_name] = bottle_name_counts.get(bottle_name, 0) + 1
+
+        backend_programs: list[tuple[str, dict[str, str]]] = []
+        for bottle_name, external_programs in configs:
+            if bottle_name_counts[bottle_name] > 1:
+                ambiguous += 1
+                continue
+            for program in external_programs.values():
+                if not isinstance(program, dict) or program.get("removed"):
+                    continue
+                name = _bottles_text(program.get("name"))
+                if name is None:
+                    continue
+                backend_programs.append((bottle_name, {"name": name}))
+
+        names_per_bottle: dict[tuple[str, str], list[dict[str, str]]] = {}
+        for bottle_name, program in backend_programs:
+            names_per_bottle.setdefault((bottle_name, program["name"]), []).append(program)
+        for (bottle_name, program_name), entries in names_per_bottle.items():
+            if len(entries) > 1:
+                ambiguous += len(entries)
+                continue
+            for entry in entries:
+                key = (backend["kind"], bottle_name, program_name)
+                programs_by_key[key] = {
+                    "name": program_name,
+                    "game_id": program_name,
+                    "bottle": bottle_name,
+                    "runner": bottle_name,
+                    "backend": backend["kind"],
+                    "store": bottle_name,
+                    "program_id": "",
+                    "use_program_id": False,
+                }
+
+    games = sorted(
+        programs_by_key.values(),
+        key=lambda game: (
+            game["name"].casefold(), game["backend"], game["bottle"].casefold(), game["program_id"],
+        ),
+    )
+    if errors or ambiguous:
+        state = "partial" if games else "error"
+    elif games:
+        state = "ready"
+    else:
+        state = "empty"
+    if games:
+        message = f"{len(games)} programa(s) registrado(s) em {bottle_count} ambiente(s) Bottles local(is)."
+        if errors:
+            message += f" {errors} erro(s) ao verificar instalações ou ler configurações locais."
+        if ambiguous:
+            message += f" {ambiguous} entrada(s) com nomes duplicados de bottle/programa foram ocultadas."
+    elif errors:
+        message = "Não foi possível verificar as instalações Bottles ou ler suas configurações locais."
+    elif ambiguous:
+        message = "Há nomes de bottles ou programas duplicados que não podem ser abertos com segurança."
+    else:
+        message = "Bottles encontrado; nenhum programa registrado foi localizado."
+    return {
+        "state": state,
+        "message": message,
+        "games": games,
+        "bottle_count": bottle_count,
+        "backend_count": len(backends),
+        "source": "arquivos bottle.yml locais do Bottles (leitura somente)",
+    }
+
+
+def launch_bottles_program(
+    program_name: str,
+    bottle_name: str,
+    backend: str,
+    program_id: str = "",
+    use_program_id: bool = False,
+) -> dict[str, Any]:
+    """Launch one selected Bottles program through the Bottles CLI without a shell."""
+    safe_program = _bottles_text(program_name)
+    safe_bottle = _bottles_text(bottle_name)
+    safe_id = _bottles_text(program_id) if use_program_id else None
+    if safe_program is None or safe_bottle is None or (use_program_id and safe_id is None):
+        return {"ok": False, "message": "Programa ou bottle do Bottles inválido."}
+    if backend == "native":
+        cli = shutil.which("bottles-cli")
+        if not cli:
+            return {"ok": False, "message": "A CLI nativa bottles-cli não está disponível."}
+        command = [cli]
+    elif backend == "flatpak":
+        flatpak = shutil.which("flatpak")
+        if not flatpak:
+            return {"ok": False, "message": "O comando flatpak não está disponível para abrir Bottles."}
+        command = [flatpak, "run", "--command=bottles-cli", _BOTTLES_FLATPAK_APP_ID]
+    else:
+        return {"ok": False, "message": "Origem de instalação Bottles inválida."}
+
+    program_argument = (
+        f"--program-id={safe_id}" if use_program_id else f"--program={safe_program}"
+    )
+    try:
+        subprocess.Popen(
+            [*command, "run", f"--bottle={safe_bottle}", program_argument],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as exc:
+        return {"ok": False, "message": f"Não foi possível encaminhar a abertura ao Bottles: {exc}"}
+    return {"ok": True, "message": "Solicitação de abertura enviada ao Bottles."}
+
+
 def installed_game_list(
     steam: dict[str, Any],
     lutris: dict[str, Any],
     heroic: dict[str, Any] | None = None,
-) -> list[dict[str, str]]:
-    games: list[dict[str, str]] = []
+    bottles: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    games: list[dict[str, Any]] = []
     for game in steam.get("games", []):
         app_id = str(game.get("app_id", ""))
         name = game.get("name")
@@ -718,6 +987,26 @@ def installed_game_list(
             "game_id": app_name,
             "runner": runner,
         })
+    for program in (bottles or {}).get("games", []):
+        name = _bottles_text(program.get("name"))
+        bottle_name = _bottles_text(program.get("bottle"))
+        backend = program.get("backend")
+        program_id = _bottles_text(program.get("program_id")) or ""
+        use_program_id = program.get("use_program_id") is True
+        if name is None or bottle_name is None or backend not in {"native", "flatpak"}:
+            continue
+        if use_program_id and not program_id:
+            continue
+        games.append({
+            "name": name,
+            "launcher": "Bottles",
+            "store": f"{bottle_name} · {backend}",
+            "game_id": name,
+            "runner": bottle_name,
+            "backend": backend,
+            "program_id": program_id,
+            "use_program_id": use_program_id,
+        })
     return sorted(
         games,
         key=lambda game: (game["name"].casefold(), game["launcher"], game["store"], game["game_id"]),
@@ -728,6 +1017,9 @@ def launch_installed_game(
     launcher: str,
     game_id: str | int,
     runner: str | None = None,
+    backend: str | None = None,
+    program_id: str = "",
+    use_program_id: bool = False,
 ) -> dict[str, Any]:
     if launcher == "Steam":
         return launch_steam_game(game_id)
@@ -735,6 +1027,8 @@ def launch_installed_game(
         return launch_lutris_game(game_id)
     if launcher == "Heroic" and isinstance(game_id, str) and isinstance(runner, str):
         return launch_heroic_game(game_id, runner)
+    if launcher == "Bottles" and isinstance(game_id, str) and isinstance(runner, str) and isinstance(backend, str):
+        return launch_bottles_program(game_id, runner, backend, program_id, use_program_id)
     return {"ok": False, "message": "Este lançador de jogos não é compatível."}
 
 

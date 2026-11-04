@@ -7,7 +7,9 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ### Adicionado
 
-- **Programas** combina jogos instalados locais de Steam, Lutris e Heroic. Lê a base SQLite do Lutris em modo somente leitura e os caches/índices de instalação locais do Heroic (Epic, GOG, Amazon e jogos adicionados manualmente), incluindo configurações nativas e Flatpak. A abertura é encaminhada ao lançador só após a seleção; o BooM não acessa contas, baixa ou instala jogos.
+- **Programas** combina jogos instalados locais de Steam, Lutris e Heroic. Lê a base SQLite do Lutris em modo somente leitura e os caches/índices de instalação do Heroic (Epic, GOG, Amazon e jogos adicionados manualmente), incluindo configurações nativas e Flatpak. A abertura é encaminhada ao lançador só após seleção; o BooM não acessa contas, baixa ou instala jogos.
+
+- **Programas** combina jogos locais de Steam, Lutris e Heroic e programas externos salvos na configuração local dos bottles Bottles. A descoberta lê os YAML locais com PyYAML em modo somente leitura para instalações nativas e Flatpak; a CLI oficial só é chamada depois da seleção de um programa e pode executar a manutenção normal do Bottles antes de abrir. Nomes duplicados no mesmo bottle são ocultados.
 
 - **Testes** amplia o benchmark de disco com sequencial de 1 MiB e aleatório 4 KiB: leitura/escrita em QD1/QD32, quatro perfis de 5 s, sempre no mesmo arquivo temporário privado de 128 MiB. Mantém confirmação, cancelamento, limite total de 120 s e limpeza; não acessa dispositivos brutos.
 
