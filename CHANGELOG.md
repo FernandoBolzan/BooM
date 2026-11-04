@@ -7,6 +7,8 @@ Todas as mudanças relevantes do BooM são registradas aqui. As versões seguem
 
 ### Adicionado
 
+- **Histórico** exporta todas as amostras agregadas ainda retidas em CSV local e cronológico pela área Sistema, TUI ou CLI. A saída usa permissão `0600`; a CLI recusa destinos existentes, e GTK/TUI pedem confirmação para substituí-los.
+
 - **Testes** importa CSV bruto e `_summary.csv` do MangoHud, calcula FPS médio/baixos e frametime, guarda somente métricas agregadas em SQLite local privado e compara sessões com o mesmo nome. GTK, TUI e CLI oferecem importação/listagem; CSV original não é copiado nem enviado.
 
 - **Programas** combina jogos instalados locais de Steam, Lutris e Heroic. Lê a base SQLite do Lutris em modo somente leitura e os caches/índices de instalação do Heroic (Epic, GOG, Amazon e jogos adicionados manualmente), incluindo configurações nativas e Flatpak. A abertura é encaminhada ao lançador só após seleção; o BooM não acessa contas, baixa ou instala jogos.

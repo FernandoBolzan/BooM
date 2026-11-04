@@ -3960,6 +3960,50 @@ def run_tui() -> None:
                 detail += f" · {delta:+.1f}% vs. sessão anterior de {session['game_label']}"
             status = f"Sessão de {session['game_label']} importada localmente{detail}."
 
+        def export_performance_history_csv() -> None:
+            nonlocal status
+            height, width = stdscr.getmaxyx()
+            prompt = "Caminho para exportar o histórico CSV (Enter cancela): "
+            curses_text(stdscr, height - 2, 2, prompt, width=width - 4, attr=curses.color_pair(4))
+            input_x = min(width - 2, 2 + len(prompt))
+            stdscr.refresh()
+            raw_path = b""
+            try:
+                curses.curs_set(1)
+            except curses.error:
+                pass
+            curses.echo()
+            try:
+                raw_path = stdscr.getstr(height - 2, input_x, max(1, width - input_x - 2))
+            except curses.error:
+                pass
+            finally:
+                curses.noecho()
+                try:
+                    curses.curs_set(0)
+                except curses.error:
+                    pass
+            raw_value = os.fsdecode(raw_path).strip()
+            if not raw_value:
+                status = "Exportação do histórico cancelada."
+                return
+            selected_path = Path(raw_value).expanduser()
+            overwrite = False
+            if selected_path.exists() or selected_path.is_symlink():
+                confirmation = f"Substituir {selected_path}? [s/N] "
+                curses_text(stdscr, height - 2, 2, confirmation, width=width - 4, attr=curses.color_pair(4))
+                stdscr.refresh()
+                overwrite = stdscr.getch() in (ord("s"), ord("S"))
+                if not overwrite:
+                    status = "Exportação cancelada; arquivo existente preservado."
+                    return
+            try:
+                result = _PERFORMANCE_HISTORY.export_csv(selected_path, overwrite=overwrite)
+            except (OSError, sqlite3.Error, ValueError) as exc:
+                status = f"Não foi possível exportar o histórico: {exc}"
+                return
+            status = f"Histórico exportado em {result['path']} · {result['sample_count']} amostras."
+
         def confirm_optional_tool_install() -> None:
             nonlocal status
             if test_sessions.is_active():
@@ -4579,7 +4623,7 @@ def run_tui() -> None:
                 y += 1
             curses_text(stdscr, height - 2, 2, status, attr=curses.color_pair(2))
             if page == PAGE_SYSTEM:
-                controls = "R atualizar · I instalar · F firmware · O IA local · M modelo · A explicar · P perfil · V restaurar · H histórico · D regras · Q sair"
+                controls = "R atualizar · I instalar · F firmware · O IA local · M modelo · A explicar · P perfil · V restaurar · H histórico · D regras · E CSV · Q sair"
             elif page == PAGE_TESTS:
                 controls = f"1-9/0 telas · R atualizar · I instalar · {test_action_legend()} · [/] GPU · X cancelar · Q sair"
             elif page == PAGE_PROCESSES:
@@ -4679,6 +4723,8 @@ def run_tui() -> None:
                 toggle_performance_history()
             elif key in (ord("d"), ord("D")) and page == PAGE_SYSTEM:
                 show_performance_diagnosis()
+            elif key in (ord("e"), ord("E")) and page == PAGE_SYSTEM:
+                export_performance_history_csv()
     curses.wrapper(main)
 
 
@@ -4773,6 +4819,7 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             self.ai_models: list[dict[str, Any]] = []
             self.ai_model: str | None = None
             self.ai_busy = False
+            self.history_exporting = False
             self.ai_status = "IA local não consultada."
             self.ai_result: dict[str, Any] | None = None
             self.ai_model_combo: Any | None = None
@@ -5069,16 +5116,20 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             self.add_row(card, "Retenção durante a gravação", "7 dias · intervalo de 5 s")
             self.add_row(card, "Pausado", "Amostras existentes ficam até retomar ou apagar")
             self.add_row(card, "Privacidade", "Só métricas agregadas; não grava processos, rede ou identificadores")
+            self.add_row(card, "Exportação", "CSV local · arquivo privado (0600)")
 
-            actions = self.make_action_flow()
+            actions = self.make_action_flow(max_children_per_line=4)
             toggle = Gtk.Button(label="Pausar histórico" if enabled else "Ativar histórico local")
             toggle.connect("clicked", self.toggle_performance_history)
             analyze = Gtk.Button(label="Analisar últimos 15 min")
             analyze.connect("clicked", self.show_performance_diagnosis)
+            export = Gtk.Button(label="Exportar CSV")
+            export.set_sensitive(sample_count > 0 and not self.history_exporting)
+            export.connect("clicked", self.export_performance_history)
             clear = Gtk.Button(label="Apagar histórico")
             clear.set_sensitive(sample_count > 0)
             clear.connect("clicked", self.clear_performance_history)
-            for button in (toggle, analyze, clear):
+            for button in (toggle, analyze, export, clear):
                 button.set_halign(Gtk.Align.START)
                 actions.add(button)
             card.pack_start(actions, False, False, 4)
@@ -5167,12 +5218,12 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             flow.set_valign(Gtk.Align.START)
             return flow
 
-        def make_action_flow(self) -> Any:
+        def make_action_flow(self, max_children_per_line: int = 3) -> Any:
             flow = Gtk.FlowBox()
             flow.get_style_context().add_class("action-flow")
             flow.set_selection_mode(Gtk.SelectionMode.NONE)
             flow.set_min_children_per_line(1)
-            flow.set_max_children_per_line(3)
+            flow.set_max_children_per_line(max_children_per_line)
             flow.set_column_spacing(10)
             flow.set_row_spacing(10)
             flow.set_homogeneous(False)
@@ -5740,6 +5791,62 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
                 if not enabled else "Gravação do histórico local pausada; os dados guardados foram mantidos."
             )
             self.render_page()
+
+        def export_performance_history(self, *_args: Any) -> None:
+            if self.history_exporting:
+                return
+            dialog = Gtk.FileChooserDialog(
+                title="Exportar histórico local de desempenho",
+                parent=self,
+                action=Gtk.FileChooserAction.SAVE,
+            )
+            dialog.add_buttons(
+                "Cancelar", Gtk.ResponseType.CANCEL,
+                "Exportar CSV", Gtk.ResponseType.ACCEPT,
+            )
+            dialog.set_do_overwrite_confirmation(True)
+            dialog.set_current_name(
+                f"boom-historico-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}.csv"
+            )
+            csv_filter = Gtk.FileFilter()
+            csv_filter.set_name("Histórico CSV")
+            csv_filter.add_mime_type("text/csv")
+            csv_filter.add_pattern("*.csv")
+            csv_filter.add_pattern("*.CSV")
+            dialog.add_filter(csv_filter)
+            try:
+                if dialog.run() != Gtk.ResponseType.ACCEPT:
+                    return
+                selected_path = dialog.get_filename()
+                if not selected_path:
+                    self.refresh_state.set_text("Exportação do histórico cancelada.")
+                    return
+                self.history_exporting = True
+                self.refresh_state.set_text("Exportando histórico local para CSV…")
+                self.render_page()
+
+                def worker() -> None:
+                    try:
+                        result = _PERFORMANCE_HISTORY.export_csv(selected_path, overwrite=True)
+                        GLib.idle_add(self.finish_history_export, result, None)
+                    except (OSError, sqlite3.Error, ValueError) as exc:
+                        GLib.idle_add(self.finish_history_export, None, str(exc))
+
+                threading.Thread(target=worker, name="boom-history-export").start()
+            finally:
+                dialog.destroy()
+
+        def finish_history_export(self, result: dict[str, Any] | None, error: str | None) -> bool:
+            self.history_exporting = False
+            if error:
+                self.refresh_state.set_text(f"Não foi possível exportar o histórico: {error}")
+            elif result:
+                self.refresh_state.set_text(
+                    f"Histórico salvo em {result['path']} · {result['sample_count']} amostras."
+                )
+            if self.page == PAGE_SYSTEM:
+                self.render_page()
+            return False
 
         def show_performance_diagnosis(self, *_args: Any) -> None:
             try:
@@ -7821,6 +7928,7 @@ def main() -> int:
     mode_group.add_argument("--history-enable", action="store_true", help="ativa gravação local e opcional de métricas enquanto o BooM estiver aberto")
     mode_group.add_argument("--history-disable", action="store_true", help="para novas gravações do histórico local")
     mode_group.add_argument("--history-status", action="store_true", help="mostra o estado e a quantidade de amostras locais")
+    mode_group.add_argument("--history-export", metavar="CSV", help="exporta as amostras locais retidas para um CSV privado")
     mode_group.add_argument("--history-clear", action="store_true", help="confirma e remove o histórico local")
     mode_group.add_argument("--diagnose", action="store_true", help="analisa a janela recente do histórico local, sem alterar o sistema")
     mode_group.add_argument("--mangohud-import", metavar="CSV", help="importa localmente um CSV de sessão MangoHud")
@@ -7869,6 +7977,14 @@ def main() -> int:
         return 0
     if args.history_status:
         print(json.dumps(history_store.status(), ensure_ascii=False, indent=2))
+        return 0
+    if args.history_export is not None:
+        try:
+            result = history_store.export_csv(args.history_export)
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
         return 0
     if args.history_clear:
         confirmation = input("Digite APAGAR para desativar e remover todas as amostras locais do BooM: ")

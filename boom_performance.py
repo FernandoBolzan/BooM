@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import math
 import os
 import re
 import sqlite3
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -34,6 +36,7 @@ SAMPLE_COLUMNS = (
     "disk_write_bytes_per_second",
     "disk_average_io_wait_ms",
 )
+HISTORY_CSV_COLUMNS = ("sampled_at_unix", "sampled_at_utc", *SAMPLE_COLUMNS)
 
 CPU_SENSOR_PATTERN = re.compile(r"(?:k10temp|coretemp|zenpower|\bcpu\b|tctl|tdie|package id)", re.I)
 
@@ -382,6 +385,25 @@ class PerformanceHistoryStore:
             return []
         return [dict(row) for row in rows]
 
+    def all_samples(self) -> list[dict[str, Any]]:
+        """Return every retained row, including older samples kept while paused."""
+        if not self.database_path.exists():
+            return []
+        if self.database_path.is_symlink():
+            raise OSError("O arquivo do histórico não pode ser um link simbólico.")
+        uri = f"{self.database_path.resolve().as_uri()}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=2.0) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                f"SELECT sampled_at, {', '.join(SAMPLE_COLUMNS)} FROM samples ORDER BY sampled_at"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def export_csv(self, path: str | Path, overwrite: bool = False) -> dict[str, Any]:
+        samples = self.all_samples()
+        saved_path = write_performance_history_csv(samples, path, overwrite=overwrite)
+        return {"path": str(saved_path), "sample_count": len(samples)}
+
     def status(self, now: float | None = None) -> dict[str, Any]:
         current = float(now if now is not None else time.time())
         result: dict[str, Any] = {
@@ -427,6 +449,53 @@ class PerformanceHistoryStore:
                 connection.close()
         self._last_recorded_at = None
         self._last_cleanup_at = None
+
+
+def write_performance_history_csv(
+    samples: list[dict[str, Any]], path: str | Path, overwrite: bool = False,
+) -> Path:
+    """Write retained aggregate samples to a private local CSV atomically."""
+    if not samples:
+        raise ValueError("Não há amostras locais para exportar.")
+    target = Path(path).expanduser()
+    if not target.name or target.is_dir():
+        raise ValueError("Escolha um caminho de arquivo CSV, não uma pasta.")
+    if target.is_symlink():
+        raise ValueError("O destino do CSV não pode ser um link simbólico.")
+    if target.exists() and not overwrite:
+        raise FileExistsError(f"O arquivo já existe: {target}")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".boom-history-", suffix=".csv", dir=target.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=HISTORY_CSV_COLUMNS, extrasaction="ignore")
+            writer.writeheader()
+            for sample in samples:
+                sampled_at = float(sample["sampled_at"])
+                try:
+                    sampled_at_utc = datetime.fromtimestamp(sampled_at, timezone.utc).isoformat(timespec="seconds")
+                except (OverflowError, OSError, ValueError) as exc:
+                    raise ValueError("O histórico contém um horário fora do intervalo exportável.") from exc
+                row = {
+                    "sampled_at_unix": sampled_at,
+                    "sampled_at_utc": sampled_at_utc.replace("+00:00", "Z"),
+                    **{column: sample.get(column) for column in SAMPLE_COLUMNS},
+                }
+                writer.writerow(row)
+            output.flush()
+            os.fsync(output.fileno())
+        if overwrite:
+            os.replace(temporary_path, target)
+        else:
+            os.link(temporary_path, target)
+            temporary_path.unlink()
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return target.absolute()
 
 
 def _metric_values(samples: list[dict[str, Any]], field: str) -> list[float]:

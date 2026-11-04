@@ -1,4 +1,5 @@
 import contextlib
+import csv
 import inspect
 import io
 import json
@@ -311,6 +312,96 @@ class PerformanceHistoryContinuationTests(unittest.TestCase):
             ), contextlib.redirect_stdout(output):
                 self.assertEqual(boom.main(), 0)
             self.assertFalse(json.loads(output.getvalue())["enabled"])
+
+
+class PerformanceHistoryExportTests(unittest.TestCase):
+    def test_export_includes_all_retained_rows_and_writes_a_private_csv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = boom_performance.PerformanceHistoryStore(
+                database_path=root / "state" / "boom" / "performance.sqlite3",
+                enabled_path=root / "config" / "boom" / "history.enabled",
+            )
+            store.set_enabled(True)
+            metrics = {"cpu_percent": 42, "memory": {"used": 8, "total": 10}}
+            self.assertTrue(store.record(metrics, sampled_at=1000))
+            self.assertTrue(store.record(metrics, sampled_at=1005))
+            store.set_enabled(False)
+            target = root / "exports" / "history.csv"
+            target.parent.mkdir()
+
+            result = store.export_csv(target)
+
+            self.assertEqual(result, {"path": str(target), "sample_count": 2})
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+            with target.open(encoding="utf-8", newline="") as source:
+                reader = csv.DictReader(source)
+                self.assertEqual(tuple(reader.fieldnames or ()), boom_performance.HISTORY_CSV_COLUMNS)
+                rows = list(reader)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["sampled_at_utc"], "1970-01-01T00:16:40Z")
+            self.assertEqual(rows[1]["cpu_percent"], "42.0")
+            self.assertEqual(rows[0]["ram_percent"], "80.0")
+
+    def test_export_requires_samples_and_does_not_replace_existing_or_symlink_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = boom_performance.PerformanceHistoryStore(
+                database_path=root / "state" / "boom" / "performance.sqlite3",
+                enabled_path=root / "config" / "boom" / "history.enabled",
+            )
+            target = root / "history.csv"
+            with self.assertRaisesRegex(ValueError, "Não há amostras"):
+                store.export_csv(target)
+            self.assertFalse(target.exists())
+
+            store.set_enabled(True)
+            store.record({"cpu_percent": 20}, sampled_at=1000)
+            target.write_text("preserve this file", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                store.export_csv(target)
+            self.assertEqual(target.read_text(encoding="utf-8"), "preserve this file")
+
+            link_target = root / "history-link.csv"
+            link_target.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "link simbólico"):
+                store.export_csv(link_target, overwrite=True)
+
+    def test_history_export_cli_reports_the_saved_csv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = {
+                "XDG_STATE_HOME": str(root / "state"),
+                "XDG_CONFIG_HOME": str(root / "config"),
+            }
+            store = boom_performance.PerformanceHistoryStore(
+                database_path=root / "state" / "boom" / "performance.sqlite3",
+                enabled_path=root / "config" / "boom" / "performance-history.enabled",
+            )
+            store.set_enabled(True)
+            store.record({"cpu_percent": 25}, sampled_at=1000)
+            output_path = root / "history.csv"
+            output = io.StringIO()
+
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                boom.sys, "argv", ["boom.py", "--history-export", str(output_path)],
+            ), contextlib.redirect_stdout(output):
+                self.assertEqual(boom.main(), 0)
+
+            result = json.loads(output.getvalue())
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["path"], str(output_path))
+            self.assertEqual(result["sample_count"], 1)
+            self.assertEqual(stat.S_IMODE(output_path.stat().st_mode), 0o600)
+            original_content = output_path.read_bytes()
+
+            output = io.StringIO()
+            with patch.dict(os.environ, environment, clear=False), patch.object(
+                boom.sys, "argv", ["boom.py", "--history-export", str(output_path)],
+            ), contextlib.redirect_stdout(output):
+                self.assertEqual(boom.main(), 1)
+            self.assertFalse(json.loads(output.getvalue())["ok"])
+            self.assertEqual(output_path.read_bytes(), original_content)
 
 
 class SensorAndStressTests(unittest.TestCase):
