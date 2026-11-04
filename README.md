@@ -27,6 +27,7 @@ O BooM reúne informações do computador e ferramentas básicas de manutenção
 - Monitoramento de CPU, clocks, RAM e GPUs NVIDIA/AMD/Intel na bandeja e nas telas Visão geral, Sistema, Memória e Gráficos, com atualização a cada cinco segundos enquanto a janela está aberta. NVIDIA inclui utilização de codificador/decodificador; AMD usa DRM/sysfs; Intel i915 usa `intel_gpu_top` quando disponível. O driver Intel Xe mostra apenas métricas que expõe via sysfs.
 - Área **Testes** com carga controlada de CPU, RAM e GPU por `stress-ng`, confirmação antes de iniciar, duração de até 120 segundos, cancelamento e parada automática a 85 °C ou se um sensor necessário parar de responder. CPU usa até quatro workers a 80% de carga; RAM usa um worker, até 25% disponível e no máximo 1 GiB; GPU usa um worker no adaptador selecionado pelo endereço PCI e exige temperatura ao vivo e render node DRM acessível.
 - Benchmarks opcionais de CPU e RAM pela ferramenta `sysbench`: CPU mede eventos/s por 10 s, com até quatro threads; RAM mede leitura e escrita sequenciais por 5 s cada com buffer privado, de no máximo 256 MiB e 1/16 da memória disponível. Ambos começam somente com temperatura da CPU abaixo de 80 °C, param a 85 °C ou se a leitura térmica falhar, pedem confirmação e podem ser cancelados. São pontuações locais desta execução, não equivalem a FPS nem a uma classificação universal entre CPUs.
+- **Sessões de jogo** importa CSV bruto e `_summary.csv` do MangoHud na área **Testes** (tecla `L` no TUI). Mostra FPS médio, FPS baixo calculado sobre as amostras de frametime mais lentas, frametime, cargas e temperaturas médias/pico, clocks/potência e uso de VRAM, RAM, swap e memória do processo quando presentes; compara sessões agrupadas pelo mesmo nome. Os logs brutos registram amostras em intervalos do MangoHud, não cada frame individual, e as condições de cena/configuração não são verificadas. O BooM não copia nem envia o CSV; guarda só resumos agregados em SQLite local privado.
 - Benchmark de armazenamento com `fio`: após escolher uma pasta e confirmar, mede leitura/gravação sequenciais de 1 MiB e aleatórias de 4 KiB em QD1/QD32. Quatro perfis aleatórios duram 5 s cada; todos usam o mesmo arquivo temporário novo de 128 MiB, removido ao terminar ou cancelar. O fluxo nunca escreve em dispositivos brutos nem altera arquivos existentes; o disco ainda não tem watchdog térmico.
 - Leituras de temperatura, ventoinhas, tensão, corrente e potência por `lm-sensors`; o BooM também usa hwmon/sysfs quando `sensors` não está disponível.
 - Área Sistema consulta dispositivos e versões de firmware reconhecidos pelo `fwupd`, além das atualizações presentes nos metadados locais. Consultar não baixa catálogo nem instala firmware; se `fwupd` faltar, ele aparece entre as ferramentas opcionais.
@@ -90,8 +91,13 @@ python3 boom.py --history-status   # estado e quantidade de amostras
 python3 boom.py --diagnose         # hipóteses locais com evidências (últimos 15 min)
 python3 boom.py --history-disable  # pausa novas amostras e mantém as já gravadas
 python3 boom.py --history-clear    # pede a confirmação literal APAGAR
+python3 boom.py --mangohud-import ~/MangoHud/Jogo_2026-11-03_21-30-00.csv --game-label "Meu jogo"
+python3 boom.py --game-sessions   # lista os resumos locais importados
+python3 boom.py --game-sessions-clear  # pede a confirmação literal APAGAR
 ./start-linux.sh --disable-autostart
 ```
+
+A importação funciona offline e aceita o CSV bruto ou o `_summary.csv` do MangoHud; consulte a seção de [FPS logging na documentação oficial](https://github.com/flightlessmango/MangoHud#fps-logging).
 
 Quando a bandeja está disponível, o BooM monitora os recursos em segundo plano. A janela e o terminal interativo atualizam métricas de CPU, memória, GPU e temperatura a cada cinco segundos. A frequência da CPU vem de CPUFreq/sysfs; em alguns drivers, `scaling_cur_freq` é o último estado solicitado e pode diferir da frequência física instantânea. A primeira abertura gráfica com bandeja ativa cria o início automático do usuário. No menu do ícone, **Abrir painel BooM** mostra a janela; fechar a janela a oculta; **Sair do BooM** encerra o processo. O início automático pode ser desativado pelo menu ou pelo comando acima.
 
@@ -117,6 +123,7 @@ Na interface GTK, **Explicação de gargalos com IA local** permite verificar o 
 - A instalação de dependências opcionais nunca acontece durante a inicialização: a tela lista os pacotes ausentes, pede confirmação e delega a autenticação ao polkit antes de chamar apt.
 - A desinstalação de aplicativos exige confirmação. O APT purga apenas o pacote selecionado, após simular e bloquear a operação se outros pacotes também forem removidos; não apaga dados pessoais nem remove dependências compartilhadas. Flatpak apaga também os dados do aplicativo deste usuário. APT pode solicitar autorização pelo polkit.
 - O histórico é opt-in, local, guardado com permissões privadas e apagável pelo usuário. `--history-enable` apenas grava a preferência; a coleta só acontece enquanto uma instância BooM monitora o computador.
+- As sessões MangoHud só entram no histórico após a importação de um arquivo escolhido. O BooM armazena o nome de agrupamento, o nome-base do arquivo e métricas agregadas em `XDG_STATE_HOME/boom/game-sessions.sqlite3` (modo `0600`, diretório `0700`); não move, edita, apaga nem envia o CSV original. Use **Apagar sessões** ou `--game-sessions-clear` para remover os resumos.
 - A explicação com IA é opcional e usa somente um modelo local do Ollama via loopback. O BooM não usa modelos de nuvem nem transmite métricas para fora; a explicação fica apenas em memória e nunca altera o sistema.
 - O encerramento de processos pede confirmação e usa somente `SIGTERM`, sem forçar com `SIGKILL`. O encerramento da árvore atua sobre os processos encontrados na captura, dos descendentes para o processo selecionado; processos protegidos bloqueiam a operação e filhos criados depois da captura podem continuar ativos.
 - A autorização administrativa para leitura SMBIOS só é solicitada após ação explícita.
@@ -125,7 +132,7 @@ Na interface GTK, **Explicação de gargalos com IA local** permite verificar o 
 ## Desenvolvimento
 
 ```bash
-python3 -m py_compile boom.py boom_performance.py boom_local_ai.py boom_disk_benchmark.py boom_sysbench.py boom_test_workflow.py boom_games.py tests/test_boom.py tests/test_local_ai.py tests/test_disk_benchmark.py tests/test_sysbench.py tests/test_games.py
+python3 -m py_compile boom.py boom_performance.py boom_game_sessions.py boom_local_ai.py boom_disk_benchmark.py boom_sysbench.py boom_test_workflow.py boom_games.py tests/test_boom.py tests/test_local_ai.py tests/test_disk_benchmark.py tests/test_sysbench.py tests/test_games.py
 python3 -m unittest discover -s tests -v
 python3 boom.py --snapshot
 ```

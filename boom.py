@@ -35,6 +35,11 @@ from boom_performance import (
     PerformanceHistoryStore,
     analyze_performance_history,
 )
+from boom_game_sessions import (
+    GameSessionStore,
+    MangoHudImportError,
+    game_label_from_filename,
+)
 from boom_disk_benchmark import (
     DISK_BENCHMARK_RANDOM_JOB_SECONDS,
     DISK_BENCHMARK_SIZE_MIB,
@@ -153,6 +158,7 @@ POWER_PROFILE_LABELS = {
     "performance": "Desempenho",
 }
 _PERFORMANCE_HISTORY = PerformanceHistoryStore()
+_GAME_SESSIONS = GameSessionStore()
 _DISK_IO_SAMPLER = DiskIoSampler()
 GTK_CSS = b"""
 .boom-root { font-family: 'Fira Sans', 'Ubuntu', sans-serif; background-color: #f1f5f1; color: #17271d; }
@@ -3908,6 +3914,52 @@ def run_tui() -> None:
             except (RuntimeError, ValueError) as exc:
                 status = str(exc)
 
+        def import_mangohud_log() -> None:
+            nonlocal status
+            height, width = stdscr.getmaxyx()
+            prompt = "Caminho do CSV do MangoHud (Enter cancela): "
+            curses_text(stdscr, height - 2, 2, prompt, width=width - 4, attr=curses.color_pair(4))
+            input_x = min(width - 2, 2 + len(prompt))
+            stdscr.refresh()
+            raw_path = b""
+            try:
+                curses.curs_set(1)
+            except curses.error:
+                pass
+            curses.echo()
+            try:
+                raw_path = stdscr.getstr(height - 2, input_x, max(1, width - input_x - 2))
+            except curses.error:
+                pass
+            finally:
+                curses.noecho()
+                try:
+                    curses.curs_set(0)
+                except curses.error:
+                    pass
+            selected_path = os.fsdecode(raw_path).strip()
+            if not selected_path:
+                status = "Importação de log cancelada."
+                return
+            try:
+                session = _GAME_SESSIONS.import_file(selected_path)
+            except (MangoHudImportError, OSError, sqlite3.Error, ValueError) as exc:
+                status = f"Não foi possível importar a sessão: {exc}"
+                return
+            comparison = session.get("comparison") or {}
+            average = session.get("average_fps")
+            detail = f" · FPS médio {average:.1f}" if isinstance(average, (int, float)) else ""
+            low = session.get("low_1pct_fps")
+            low_01 = session.get("low_01pct_fps")
+            if isinstance(low, (int, float)):
+                detail += f" · baixo 1% das amostras {low:.1f} FPS"
+            if isinstance(low_01, (int, float)):
+                detail += f" · baixo 0,1% das amostras {low_01:.1f} FPS"
+            delta = comparison.get("average_fps", {}).get("delta_percent")
+            if isinstance(delta, (int, float)):
+                detail += f" · {delta:+.1f}% vs. sessão anterior de {session['game_label']}"
+            status = f"Sessão de {session['game_label']} importada localmente{detail}."
+
         def confirm_optional_tool_install() -> None:
             nonlocal status
             if test_sessions.is_active():
@@ -4336,6 +4388,28 @@ def run_tui() -> None:
                     "Benchmark RAM: " + benchmark_memory["message"],
                     "Atalhos: " + test_action_legend() + " · [/] escolhe GPU · X cancela.",
                 ]
+                try:
+                    latest_game_session = next(iter(_GAME_SESSIONS.sessions(limit=1)), None)
+                    if latest_game_session:
+                        fps_values = []
+                        for label, field in (
+                            ("média", "average_fps"),
+                            ("1% das amostras", "low_1pct_fps"),
+                            ("0,1% das amostras", "low_01pct_fps"),
+                        ):
+                            value = latest_game_session.get(field)
+                            if isinstance(value, (int, float)):
+                                fps_values.append(f"{label} {value:.1f} FPS")
+                        fps_text = " · ".join(fps_values) or "FPS indisponível"
+                        test_rows.insert(
+                            1,
+                            f"Última sessão MangoHud: {latest_game_session['game_label']} · {fps_text}",
+                        )
+                    else:
+                        test_rows.insert(1, "Sessões MangoHud: nenhuma importada · pressione L para importar um CSV.")
+                except (OSError, sqlite3.Error) as exc:
+                    test_rows.insert(1, f"Histórico de sessões MangoHud indisponível: {exc}")
+                test_rows[-1] += " · L importa log MangoHud"
                 for line in test_rows:
                     curses_text(stdscr, y, 2, line, width=width - 4); y += 1
                 if session.get("summary"):
@@ -4573,6 +4647,8 @@ def run_tui() -> None:
             elif key in (ord("x"), ord("X")) and page == PAGE_TESTS:
                 test_sessions.cancel()
                 status = "Cancelamento do teste solicitado."
+            elif key in (ord("l"), ord("L")) and page == PAGE_TESTS:
+                import_mangohud_log()
             elif page == PAGE_TESTS and key >= 0 and test_action_for_shortcut(chr(key)):
                 action = test_action_for_shortcut(chr(key))
                 if action and action.kind == "disk":
@@ -5807,6 +5883,94 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             dialog.run()
             dialog.destroy()
 
+        def request_mangohud_import(self, *_args: Any) -> None:
+            chooser = Gtk.FileChooserDialog(
+                title="Importar sessão do MangoHud",
+                parent=self,
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            chooser.add_buttons(
+                "Cancelar", Gtk.ResponseType.CANCEL,
+                "Selecionar CSV", Gtk.ResponseType.ACCEPT,
+            )
+            csv_filter = Gtk.FileFilter()
+            csv_filter.set_name("CSV do MangoHud")
+            csv_filter.add_pattern("*.csv")
+            csv_filter.add_pattern("*.CSV")
+            chooser.add_filter(csv_filter)
+            response = chooser.run()
+            source_path = chooser.get_filename() if response == Gtk.ResponseType.ACCEPT else None
+            chooser.destroy()
+            if not source_path:
+                self.refresh_state.set_text("Importação de log MangoHud cancelada.")
+                return
+
+            dialog = Gtk.Dialog(
+                title="Identificar o jogo",
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True,
+            )
+            dialog.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Importar sessão", Gtk.ResponseType.ACCEPT)
+            dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+            box = dialog.get_content_area()
+            prompt = Gtk.Label(label="Nome usado para agrupar e comparar sessões locais:")
+            prompt.set_xalign(0)
+            prompt.set_line_wrap(True)
+            entry = Gtk.Entry()
+            entry.set_max_length(80)
+            entry.set_text(game_label_from_filename(source_path))
+            box.set_spacing(12)
+            box.set_border_width(16)
+            box.pack_start(prompt, False, False, 0)
+            box.pack_start(entry, False, False, 0)
+            dialog.show_all()
+            response = dialog.run()
+            game_label = entry.get_text() if response == Gtk.ResponseType.ACCEPT else None
+            dialog.destroy()
+            if game_label is None:
+                self.refresh_state.set_text("Importação de log MangoHud cancelada; arquivo original mantido.")
+                return
+            try:
+                imported = _GAME_SESSIONS.import_file(source_path, game_label)
+            except (MangoHudImportError, OSError, sqlite3.Error, ValueError) as exc:
+                self.refresh_state.set_text(f"Não foi possível importar o CSV do MangoHud: {exc}")
+                return
+            average = imported.get("average_fps")
+            status = f"Sessão de {imported['game_label']} importada · "
+            status += f"média de {average:.1f} FPS" if isinstance(average, (int, float)) else "média de FPS indisponível"
+            previous = (imported.get("comparison") or {}).get("average_fps")
+            if previous:
+                status += f" · {previous['delta_percent']:+.1f}% vs. importação anterior"
+            self.refresh_state.set_text(status)
+            self.render_page()
+
+        def clear_game_sessions(self, *_args: Any) -> None:
+            summary = _GAME_SESSIONS.status()
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=Gtk.DialogFlags.MODAL,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.CANCEL,
+                text="Apagar o histórico de sessões de jogo?",
+            )
+            dialog.format_secondary_text(
+                f"Serão removidos {summary['session_count']} resumos agregados. Os arquivos CSV originais não serão alterados."
+            )
+            dialog.add_button("Apagar sessões", Gtk.ResponseType.ACCEPT)
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.ACCEPT:
+                return
+            try:
+                removed = _GAME_SESSIONS.clear()
+            except (OSError, sqlite3.Error) as exc:
+                self.refresh_state.set_text(f"Não foi possível apagar as sessões locais: {exc}")
+                return
+            self.refresh_state.set_text(f"Histórico local apagado · {removed} sessão(ões) removida(s).")
+            self.render_page()
+
         def clear_performance_history(self, *_args: Any) -> None:
             summary = _PERFORMANCE_HISTORY.status()
             dialog = Gtk.MessageDialog(
@@ -5847,6 +6011,102 @@ def launch_gtk(command_line: list[str] | None = None) -> bool:
             gpu_readiness = stress_test_readiness(temperatures, "gpu", selected_gpu)
             session = self.test_sessions().snapshot()
             busy = self.stress_starting or self.optional_installing or self.test_sessions().is_active()
+
+            mangohud_card = self.card("Sessões de jogo · MangoHud")
+            game_session_error = None
+            try:
+                game_sessions = _GAME_SESSIONS.sessions(limit=5)
+            except (OSError, sqlite3.Error) as exc:
+                game_sessions = []
+                game_session_error = exc
+            if game_session_error is not None:
+                self.add_row(mangohud_card, "Histórico local", f"Indisponível: {game_session_error}")
+            elif not game_sessions:
+                self.add_row(mangohud_card, "Histórico local", "Nenhum log importado. Os arquivos originais permanecem no local escolhido.")
+            for index, game_session in enumerate(game_sessions):
+                imported_at = datetime.fromtimestamp(game_session["imported_at"]).astimezone().strftime("%d/%m/%Y %H:%M")
+                fps = game_session.get("average_fps")
+                low = game_session.get("low_1pct_fps")
+                low_01 = game_session.get("low_01pct_fps")
+                p97 = game_session.get("fps_p97")
+                p99 = game_session.get("p99_frametime_ms")
+                if p99 is None and game_session.get("avg_frametime_ms"):
+                    frame_summary = f"frametime médio {game_session['avg_frametime_ms']:.2f} ms"
+                else:
+                    frame_summary = f"frametime p99 {p99:.2f} ms" if p99 is not None else "frametime indisponível"
+                values = []
+                if isinstance(fps, (int, float)):
+                    values.append(f"média {fps:.1f} FPS")
+                if isinstance(low, (int, float)):
+                    values.append(f"1% das amostras {low:.1f} FPS")
+                if isinstance(low_01, (int, float)):
+                    values.append(f"0,1% das amostras {low_01:.1f} FPS")
+                if isinstance(p97, (int, float)):
+                    values.append(f"percentil 97 {p97:.1f} FPS")
+                values.append(frame_summary)
+                detail = " · ".join(values)
+                sample_count = game_session.get("sample_count")
+                duration = game_session.get("duration_seconds")
+                if isinstance(sample_count, int):
+                    detail += f" · {sample_count} amostras MangoHud"
+                if isinstance(duration, (int, float)):
+                    detail += f" · {duration:.1f} s"
+                hardware = []
+                for label, average_field, peak_field, unit in (
+                    ("GPU", "avg_gpu_load_pct", "peak_gpu_load_pct", "%"),
+                    ("CPU", "avg_cpu_load_pct", "peak_cpu_load_pct", "%"),
+                    ("GPU temp", "avg_gpu_temp_c", "peak_gpu_temp_c", " °C"),
+                    ("CPU temp", "avg_cpu_temp_c", "peak_cpu_temp_c", " °C"),
+                    ("VRAM", "avg_vram_used_gib", "peak_vram_used_gib", " GiB"),
+                    ("RAM", "avg_ram_used_gib", "peak_ram_used_gib", " GiB"),
+                    ("Swap", "avg_swap_used_gib", "peak_swap_used_gib", " GiB"),
+                    ("Memória do jogo", "avg_process_rss_gib", "peak_process_rss_gib", " GiB"),
+                ):
+                    average_value = game_session.get(average_field)
+                    peak_value = game_session.get(peak_field)
+                    if isinstance(average_value, (int, float)):
+                        display = f"{label} {average_value:.1f}{unit}"
+                        if isinstance(peak_value, (int, float)):
+                            display += f" (pico {peak_value:.1f}{unit})"
+                        hardware.append(display)
+                for label, field, unit in (
+                    ("CPU clock", "avg_cpu_clock_mhz", " MHz"),
+                    ("GPU clock", "avg_gpu_core_clock_mhz", " MHz"),
+                    ("GPU mem clock", "avg_gpu_mem_clock_mhz", " MHz"),
+                    ("CPU power", "avg_cpu_power_w", " W"),
+                    ("GPU power", "avg_gpu_power_w", " W"),
+                ):
+                    value = game_session.get(field)
+                    if isinstance(value, (int, float)):
+                        hardware.append(f"{label} {value:.1f}{unit}")
+                if hardware:
+                    detail += " · " + " · ".join(hardware)
+                older = next((
+                    candidate for candidate in game_sessions[index + 1:]
+                    if candidate["game_label"].casefold() == game_session["game_label"].casefold()
+                ), None)
+                if older and isinstance(fps, (int, float)) and isinstance(older.get("average_fps"), (int, float)) and older["average_fps"] > 0:
+                    delta = (fps - older["average_fps"]) / older["average_fps"] * 100
+                    detail += f" · {delta:+.1f}% vs. sessão anterior com o mesmo nome"
+                self.add_row(mangohud_card, f"{game_session['game_label']} · {imported_at}", detail)
+            self.add_row(
+                mangohud_card,
+                "Leitura",
+                "Importa CSV bruto ou _summary.csv. Percentis do CSV bruto usam amostras MangoHud, não cada quadro; só agregados ficam no histórico privado. Cenas/configurações não são verificadas.",
+            )
+            mangohud_actions = self.make_action_flow()
+            import_button = Gtk.Button(label="Importar CSV do MangoHud")
+            import_button.get_style_context().add_class("action")
+            import_button.set_sensitive(not busy)
+            import_button.connect("clicked", self.request_mangohud_import)
+            clear_button = Gtk.Button(label="Apagar sessões")
+            clear_button.set_sensitive(bool(game_sessions))
+            clear_button.connect("clicked", self.clear_game_sessions)
+            for button in (import_button, clear_button):
+                button.set_halign(Gtk.Align.START)
+                mangohud_actions.add(button)
+            mangohud_card.pack_start(mangohud_actions, False, False, 4)
+            self.add_card(mangohud_card)
 
             sensors = self.card("Temperatura e proteção térmica")
             self.add_row(sensors, "Fonte", self.data.get("sensors_status", "lm-sensors / hwmon / sysfs"))
@@ -7563,6 +7823,9 @@ def main() -> int:
     mode_group.add_argument("--history-status", action="store_true", help="mostra o estado e a quantidade de amostras locais")
     mode_group.add_argument("--history-clear", action="store_true", help="confirma e remove o histórico local")
     mode_group.add_argument("--diagnose", action="store_true", help="analisa a janela recente do histórico local, sem alterar o sistema")
+    mode_group.add_argument("--mangohud-import", metavar="CSV", help="importa localmente um CSV de sessão MangoHud")
+    mode_group.add_argument("--game-sessions", action="store_true", help="mostra os últimos resumos de sessões MangoHud")
+    mode_group.add_argument("--game-sessions-clear", action="store_true", help="confirma e apaga os resumos locais de sessões MangoHud")
     mode_group.add_argument("--network-test", action="store_true", help="executa ping para o gateway e 1.1.1.1")
     mode_group.add_argument("--tui", action="store_true", help="abre o painel interativo no terminal")
     mode_group.add_argument("--tray", action="store_true", help="inicia oculto e monitora CPU, clocks, RAM, GPU e temperaturas")
@@ -7572,7 +7835,10 @@ def main() -> int:
         "--diagnose-window", type=float, default=15,
         help="janela em minutos para --diagnose (1 a 10080; padrão: 15)",
     )
+    parser.add_argument("--game-label", help="nome opcional para agrupar sessões importadas com --mangohud-import")
     args = parser.parse_args()
+    if args.game_label and not args.mangohud_import:
+        parser.error("--game-label só pode ser usado com --mangohud-import")
     history_store = PerformanceHistoryStore()
     if args.history_enable:
         try:
@@ -7616,6 +7882,37 @@ def main() -> int:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
             return 1
         print(json.dumps({"ok": True, "enabled": False, "sample_count": 0}, ensure_ascii=False))
+        return 0
+    if args.mangohud_import:
+        try:
+            imported = _GAME_SESSIONS.import_file(args.mangohud_import, args.game_label)
+        except (MangoHudImportError, OSError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+        print(json.dumps({"ok": True, "session": imported}, ensure_ascii=False, indent=2))
+        return 0
+    if args.game_sessions:
+        try:
+            print(json.dumps({
+                "ok": True,
+                **_GAME_SESSIONS.status(),
+                "sessions": _GAME_SESSIONS.sessions(limit=20),
+            }, ensure_ascii=False, indent=2))
+        except (OSError, sqlite3.Error) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+        return 0
+    if args.game_sessions_clear:
+        confirmation = input("Digite APAGAR para remover todos os resumos locais de sessões de jogo: ")
+        if confirmation.strip() != "APAGAR":
+            print("Cancelado; o histórico de sessões não foi alterado.")
+            return 0
+        try:
+            removed = _GAME_SESSIONS.clear()
+        except (OSError, sqlite3.Error) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+        print(json.dumps({"ok": True, "removed_sessions": removed}, ensure_ascii=False))
         return 0
     if args.diagnose:
         try:
